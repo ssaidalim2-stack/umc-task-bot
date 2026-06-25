@@ -1,0 +1,19 @@
+name: deadline-reminders
+
+# Пингует /api/cron каждые 15 минут — проверка дедлайнов и отправка напоминаний.
+# Бесплатно. Требует два секрета репозитория: APP_URL и CRON_SECRET (см. README, раздел 6).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reminders
+        run: |
+          curl -fsS -X GET \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron" || exit 1
