@@ -11,8 +11,13 @@ import {
 } from "./keyboards";
 import { renderCard, renderTaskLine } from "./render";
 import { quickDeadline, parseCustomDeadline } from "./time";
+import { registerV2 } from "./v2";
+import { mainMenu } from "./views";
 
 export const bot = new Bot(process.env.BOT_TOKEN as string);
+
+// регистрируем v2-обработчики ДО message:text-визарда (иначе команды не сработают)
+registerV2(bot);
 
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "")
   .split(",")
@@ -162,6 +167,7 @@ bot.callbackQuery(/^lang:(ru|uz)$/, async (ctx) => {
         access: t(lang, isAdmin(m, ctx.from.id) ? "access_admin" : "access_member"),
       })
     );
+    await ctx.reply("🏠 Главное меню:", { reply_markup: mainMenu() });
   }
 });
 
