@@ -4,7 +4,7 @@
   "private": true,
   "description": "Telegram bot for team task management (tasks, reminders, statuses)",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
     "setup-webhook": "node scripts/set-webhook.mjs"
