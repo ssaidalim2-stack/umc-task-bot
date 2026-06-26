@@ -123,11 +123,18 @@ export async function markSub(id: number, field: "reminded_before" | "reminded_a
 }
 
 // ---------- group bindings ----------
-export async function addBinding(chatId: number, projectId: number, specialty: string): Promise<void> {
-  await supabase.from("group_bindings").upsert({ chat_id: chatId, project_id: projectId, specialty }, { onConflict: "chat_id,project_id,specialty" });
+export async function addBinding(chatId: number, projectId: number | null, specialty: string): Promise<void> {
+  if (projectId == null) {
+    const { data } = await supabase.from("group_bindings").select("id").eq("chat_id", chatId).is("project_id", null).eq("specialty", specialty).maybeSingle();
+    if (!data) await supabase.from("group_bindings").insert({ chat_id: chatId, project_id: null, specialty });
+  } else {
+    await supabase.from("group_bindings").upsert({ chat_id: chatId, project_id: projectId, specialty }, { onConflict: "chat_id,project_id,specialty" });
+  }
 }
-export async function bindingsFor(projectId: number, specialty: string): Promise<GroupBinding[]> {
-  const { data } = await supabase.from("group_bindings").select("*").eq("project_id", projectId).in("specialty", [specialty, "all"]);
+export async function bindingsFor(projectId: number | null, specialty: string): Promise<GroupBinding[]> {
+  let q = supabase.from("group_bindings").select("*").in("specialty", [specialty, "all"]);
+  q = projectId ? q.or(`project_id.eq.${projectId},project_id.is.null`) : q.is("project_id", null);
+  const { data } = await q;
   return (data as GroupBinding[]) ?? [];
 }
 

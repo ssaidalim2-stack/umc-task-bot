@@ -173,11 +173,17 @@ export function registerV2(bot: Bot) {
     const m = await db.getMember(ctx.from!.id);
     if (!isAdmin(m, ctx.from!.id)) return ctx.reply("⛔ Только админ может привязать группу.");
     const [key, specialty] = (ctx.match as string).trim().split(/\s+/);
-    if (!key) return ctx.reply("Формат: /bind <проект> <раздел>\nПроекты: entrium, mystep, ryan, sevencore, cargogpt\nРазделы: all, idea, script, shoot, edit, published");
-    const proj = (await d2.getProjects()).find((p) => p.key === key.toLowerCase());
-    if (!proj) return ctx.reply("Проект не найден.");
-    await d2.addBinding(ctx.chat.id, proj.id, (specialty || "all").toLowerCase());
-    await ctx.reply(`✅ Группа привязана к проекту ${proj.name} (раздел: ${specialty || "all"}). Сюда будут приходить ТЗ и дедлайны по этому разделу.`);
+    if (!key) return ctx.reply("Формат: /bind <проект> <раздел>\nПроекты: entrium, mystep, ryan, sevencore, cargogpt, all\nРазделы: all, idea, script, shoot, edit, published, design");
+    const keyL = key.toLowerCase();
+    let projId: number | null = null, projName = "все проекты";
+    if (!["all", "*", "все"].includes(keyL)) {
+      const proj = (await d2.getProjects()).find((p) => p.key === keyL);
+      if (!proj) return ctx.reply("Проект не найден.");
+      projId = proj.id; projName = proj.name;
+    }
+    const spec = (specialty || "all").toLowerCase();
+    await d2.addBinding(ctx.chat.id, projId, spec);
+    await ctx.reply(`✅ Группа привязана: ${projName} (раздел: ${spec}). Сюда будут приходить ТЗ и уведомления по этому разделу.`);
   });
 }
 

@@ -46,7 +46,7 @@ const TABS_BY_ROLE: Record<string, string[]> = {
 
 const SECTION = {
   video: { label: "Видео", anchor: "Самандар", specialty: "shoot" },
-  design: { label: "Дизайн", anchor: "Владимир", specialty: "all" },
+  design: { label: "Дизайн", anchor: "Владимир", specialty: "design" },
   edit: { label: "Монтаж", anchor: "Асрор", specialty: "edit" },
 } as const;
 
@@ -183,7 +183,7 @@ export async function doAction(userId: number, action: any) {
       await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: execAnchor, project_id: projectId });
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
       if (specialist) { try { await bot.api.sendMessage(specialist.telegram_id, msg); } catch {} }
-      if (projectId) for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
+      for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
       break;
     }
   }
