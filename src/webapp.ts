@@ -175,11 +175,12 @@ export async function doAction(userId: number, action: any) {
       const sec = (SECTION as any)[action.section];
       const text = (action.text || "").trim();
       if (!sec || !text) break;
-      const specialist = await d2.resolveMember(sec.anchor);
+      const execAnchor = action.assignee || sec.anchor; // выбранный исполнитель (Самандар может делать и монтаж)
+      const specialist = await d2.resolveMember(execAnchor);
       const projectId = action.projectId ? +action.projectId : null;
       const proj = projectId ? await d2.getProject(projectId) : null;
       const title = `ТЗ • ${sec.label}${proj ? " • " + proj.name : ""}: ${text.slice(0, 50)}`;
-      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: sec.anchor, project_id: projectId });
+      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: execAnchor, project_id: projectId });
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
       if (specialist) { try { await bot.api.sendMessage(specialist.telegram_id, msg); } catch {} }
       if (projectId) for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
