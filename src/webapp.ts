@@ -64,58 +64,69 @@ function isAdminId(member: db.Member | null, id: number) {
 
 // ---------- сбор данных ----------
 export async function getData(userId: number) {
-  let member = await db.getMember(userId);
-  if (!member) member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" });
+  // один «залп» параллельных запросов вместо десятков последовательных
+  const [member0, projects, plans, items, members, openTasks, subs] = await Promise.all([
+    db.getMember(userId), d2.getProjects(), d2.getAllActivePlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(),
+  ]);
+  let member = member0;
+  if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
   const isAdmin = isAdminId(member, userId);
   const role = roleOf(member, isAdmin);
   const tabs = TABS_BY_ROLE[role] || ["tasks"];
 
-  const projects = await d2.getProjects();
-  const period = (await d2.getActivePlan(projects[0]?.id))?.period || "";
-  const projOut = [];
-  for (const p of projects) {
-    const plan = await d2.getActivePlan(p.id);
-    const s = await d2.planSummary(p.id);
-    const videos = await d2.listItems(p.id, "video");
-    projOut.push({
-      id: p.id, key: p.key, name: p.name, sheet_url: plan?.sheet_url || null,
-      video: s.video, videoTotal: s.videoTotal, graphicDone: s.graphicDone, graphicTotal: s.graphicTotal,
-      videos: videos.map((v) => ({ id: v.id, idx: v.idx, stage: v.stage, format: v.format })),
-    });
-  }
-
-  const myTasks = (await d2.tasksForMember(member!)).filter((t) => t.status === "new" || t.status === "in_progress");
-  const openTasks = await d2.listOpenTasks();
+  const planByProject = new Map(plans.map((p) => [p.project_id, p]));
+  const period = plans[0]?.period || "";
   const pendingPublish = new Set(openTasks.filter((t) => t.status === "await_confirm" && t.item_id).map((t) => t.item_id));
-  for (const p of projOut) for (const v of p.videos as any[]) v.pending = pendingPublish.has(v.id);
+
+  const itemsByProject = new Map<number, any[]>();
+  for (const it of items) { const a = itemsByProject.get(it.project_id) || []; a.push(it); itemsByProject.set(it.project_id, a); }
+
+  const projOut = projects.map((p) => {
+    const its = itemsByProject.get(p.id) || [];
+    const videos = its.filter((x) => x.type === "video").sort((a, b) => a.idx - b.idx);
+    const graphics = its.filter((x) => x.type === "graphic");
+    const video: Record<string, number> = {};
+    for (const v of videos) video[v.stage] = (video[v.stage] || 0) + 1;
+    return {
+      id: p.id, key: p.key, name: p.name, sheet_url: planByProject.get(p.id)?.sheet_url || null,
+      video, videoTotal: videos.length,
+      graphicDone: graphics.filter((g) => g.stage === "done").length, graphicTotal: graphics.length,
+      videos: videos.map((v) => ({ id: v.id, idx: v.idx, stage: v.stage, format: v.format, pending: pendingPublish.has(v.id) })),
+    };
+  });
+
+  const memTasks = (mem: db.Member) => openTasks.filter((t) => {
+    if (t.assignee_id && t.assignee_id === mem.telegram_id) return true;
+    if (!t.assignee_id && t.assignee_name) return d2.resolveMemberSync(members, t.assignee_name)?.telegram_id === mem.telegram_id;
+    return false;
+  });
+
+  const myTasks = memTasks(member!).filter((t) => t.status === "new" || t.status === "in_progress");
   const canConfirm = role === "admin" || role === "manager";
   const confirmable = canConfirm ? openTasks.filter((t) => t.status === "await_confirm").map((t) => ({ id: t.id, title: t.title })) : [];
-  const subs = await d2.listSubscriptions();
 
   let pub = 0, vt = 0, gd = 0, gt = 0;
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
 
-  // вкладка «Работа» — сотрудники с задачами
   let team: any[] = [];
-  if (role === "admin" || role === "manager") {
+  if (canConfirm) {
     for (const t of TEAM_ANCHORS) {
-      const m = await d2.resolveMember(t.anchor);
-      const tks = m ? (await d2.tasksForMember(m)).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm") : [];
+      const m = d2.resolveMemberSync(members, t.anchor);
+      const tks = m ? memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm") : [];
       team.push({ anchor: t.anchor, role: t.role, name: m?.name || t.anchor, registered: !!m, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })) });
     }
   }
 
-  // «Моя работа» — элементы конвейера для специалиста
   let myWork: any[] = [];
   if (role === "videographer" || role === "editor" || role === "designer") {
     const stage = role === "videographer" ? "shoot" : role === "editor" ? "edit" : null;
-    for (const p of projects) {
+    for (const p of projOut) {
+      const its = itemsByProject.get(p.id) || [];
       if (stage) {
-        const items = (await d2.listItems(p.id, "video")).filter((v) => v.stage === stage);
-        for (const v of items) myWork.push({ id: v.id, type: "video", projectId: p.id, projectName: p.name, idx: v.idx, stage: v.stage, pending: pendingPublish.has(v.id) });
+        for (const v of its.filter((x) => x.type === "video" && x.stage === stage)) myWork.push({ id: v.id, type: "video", projectId: p.id, projectName: p.name, idx: v.idx, stage: v.stage, pending: pendingPublish.has(v.id) });
       } else {
-        const g = (await d2.listItems(p.id, "graphic")).filter((x) => x.stage !== "done");
-        if (g.length) myWork.push({ type: "graphic", projectId: p.id, projectName: p.name, left: g.length });
+        const left = its.filter((x) => x.type === "graphic" && x.stage !== "done").length;
+        if (left) myWork.push({ type: "graphic", projectId: p.id, projectName: p.name, left });
       }
     }
   }

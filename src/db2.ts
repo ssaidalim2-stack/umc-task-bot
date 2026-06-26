@@ -16,6 +16,14 @@ export async function getProject(id: number): Promise<Project | null> {
   const { data } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
   return (data as Project) ?? null;
 }
+export async function getAllActivePlans(): Promise<ContentPlan[]> {
+  const { data } = await supabase.from("content_plans").select("*").eq("is_active", true);
+  return (data as ContentPlan[]) ?? [];
+}
+export async function getAllItems(): Promise<ContentItem[]> {
+  const { data } = await supabase.from("content_items").select("*").order("idx");
+  return (data as ContentItem[]) ?? [];
+}
 export async function getActivePlan(projectId: number): Promise<ContentPlan | null> {
   const { data } = await supabase.from("content_plans").select("*").eq("project_id", projectId).eq("is_active", true).maybeSingle();
   return (data as ContentPlan) ?? null;
