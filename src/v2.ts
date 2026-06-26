@@ -32,6 +32,10 @@ export function registerV2(bot: Bot) {
   bot.command("menu", async (ctx) => {
     await ctx.reply("🏠 Главное меню:", { reply_markup: views.mainMenu() });
   });
+  bot.command("app", async (ctx) => {
+    const url = process.env.APP_URL || "https://umc-task-bot.vercel.app";
+    await ctx.reply("🚀 Открой приложение:", { reply_markup: new InlineKeyboard().webApp("Открыть UMC Task", url) });
+  });
   bot.callbackQuery("home", async (ctx) => {
     await nav(ctx, { text: "🏠 Главное меню:", kb: views.mainMenu() });
   });

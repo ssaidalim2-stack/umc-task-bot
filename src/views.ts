@@ -2,9 +2,12 @@ import { InlineKeyboard } from "grammy";
 import * as d2 from "./db2";
 import { VIDEO_STAGES, STAGE_LABEL, nextStage } from "./projects";
 
+const APP_URL = process.env.APP_URL || "https://umc-task-bot.vercel.app";
+
 // ---------- главное меню ----------
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
+    .webApp("🚀 Открыть приложение", APP_URL).row()
     .text("📋 Контент-план", "cp_menu").text("🎬 Видео", "vid_projects").row()
     .text("✅ Мои задачи", "tasks_my").text("📊 Отчёт", "report_now").row()
     .text("💳 Подписки", "subs");
