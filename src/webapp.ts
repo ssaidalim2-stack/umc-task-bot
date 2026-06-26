@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { InlineKeyboard } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import { bot } from "./bot";
@@ -85,6 +86,8 @@ export async function getData(userId: number) {
 
   const myTasks = (await d2.tasksForMember(member!)).filter((t) => t.status === "new" || t.status === "in_progress");
   const openTasks = await d2.listOpenTasks();
+  const pendingPublish = new Set(openTasks.filter((t) => t.status === "await_confirm" && t.item_id).map((t) => t.item_id));
+  for (const p of projOut) for (const v of p.videos as any[]) v.pending = pendingPublish.has(v.id);
   const canConfirm = role === "admin" || role === "manager";
   const confirmable = canConfirm ? openTasks.filter((t) => t.status === "await_confirm").map((t) => ({ id: t.id, title: t.title })) : [];
   const subs = await d2.listSubscriptions();
@@ -109,7 +112,7 @@ export async function getData(userId: number) {
     for (const p of projects) {
       if (stage) {
         const items = (await d2.listItems(p.id, "video")).filter((v) => v.stage === stage);
-        for (const v of items) myWork.push({ id: v.id, type: "video", projectId: p.id, projectName: p.name, idx: v.idx, stage: v.stage });
+        for (const v of items) myWork.push({ id: v.id, type: "video", projectId: p.id, projectName: p.name, idx: v.idx, stage: v.stage, pending: pendingPublish.has(v.id) });
       } else {
         const g = (await d2.listItems(p.id, "graphic")).filter((x) => x.stage !== "done");
         if (g.length) myWork.push({ type: "graphic", projectId: p.id, projectName: p.name, left: g.length });
@@ -140,6 +143,21 @@ export async function doAction(userId: number, action: any) {
       if (!item) break;
       const nx = nextStage(item.stage);
       if (!nx) break;
+      // публикацию от не-админа отправляем на подтверждение, не двигаем сразу
+      if (nx === "published" && role !== "admin") {
+        const open = await d2.listOpenTasks();
+        if (!open.some((t) => t.item_id === item.id && t.status === "await_confirm")) {
+          const proj = await d2.getProject(item.project_id);
+          const tid = await d2.createAdhocTask({ title: `Публикация: ${proj?.name} Видео #${item.idx}`, assignee_id: userId, item_id: item.id, status: "await_confirm" });
+          const who = member?.name || "Сотрудник";
+          const kb = new InlineKeyboard().text("✅ Подтвердить публикацию", `task_confirm:${tid}`);
+          for (const cid of await confirmers()) {
+            if (cid === userId) continue;
+            try { await bot.api.sendMessage(cid, `🔔 ${who} отметил публикацию: ${proj?.name} Видео #${item.idx}. Подтвердить?`, { reply_markup: kb }); } catch {}
+          }
+        }
+        break; // не двигаем статус до подтверждения
+      }
       await d2.updateItem(item.id, { stage: nx, status: nx === "published" ? "done" : "in_progress" });
       await notifyStage(item.project_id, item.idx, nx);
       break;
@@ -167,6 +185,7 @@ export async function doAction(userId: number, action: any) {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
       await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
+      if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" }); // подтверждённая публикация
       if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Твоя задача «${t.title}» подтверждена.`); } catch {} }
       break;
     }

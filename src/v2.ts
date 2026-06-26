@@ -124,6 +124,7 @@ export function registerV2(bot: Bot) {
     const t = await d2.getTaskRow(id);
     if (!t) return ctx.answerCallbackQuery();
     await d2.setTaskStatus(id, "done", { confirmed_by: ctx.from.id });
+    if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" }); // подтверждённая публикация видео
     await ctx.answerCallbackQuery({ text: "Подтверждено ✅" });
     try { await ctx.editMessageText(`✅ Задача #${id} «${t.title}» подтверждена.`); } catch {}
     if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Твоя задача «${t.title}» подтверждена. Отлично!`); } catch {} }

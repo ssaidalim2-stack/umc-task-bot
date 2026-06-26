@@ -100,11 +100,12 @@ export async function tasksForMember(member: Member): Promise<TaskRow[]> {
   });
 }
 
-export async function createAdhocTask(input: { title: string; description?: string | null; assignee_id?: number | null; assignee_name?: string | null; project_id?: number | null }): Promise<number | null> {
+export async function createAdhocTask(input: { title: string; description?: string | null; assignee_id?: number | null; assignee_name?: string | null; project_id?: number | null; status?: string; item_id?: number | null }): Promise<number | null> {
   const { data } = await supabase.from("tasks").insert({
     title: input.title, description: input.description ?? null,
     assignee_id: input.assignee_id ?? null, assignee_name: input.assignee_name ?? null,
-    creator_id: 0, project_id: input.project_id ?? null, kind: "adhoc", status: "new", needs_confirmation: true,
+    creator_id: 0, project_id: input.project_id ?? null, kind: "adhoc",
+    status: input.status ?? "new", needs_confirmation: true, item_id: input.item_id ?? null,
   }).select("id").single();
   return data?.id ?? null;
 }

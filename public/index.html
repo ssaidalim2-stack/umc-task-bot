@@ -127,6 +127,7 @@ function renderVideo(){
     const nx=stages[stages.indexOf(vd.stage)+1]; let a='';
     if(vd.stage==='idea') a+=`<button class="btn sm ${vd.format==='fun'?'':'sec'}" data-fmt="${vd.id}:fun">🎭</button><button class="btn sm ${vd.format==='sell'?'':'sec'}" data-fmt="${vd.id}:sell">💰</button>`;
     if(nx) a+=`<button class="btn sm" data-adv="${vd.id}">→ ${lbl[nx].replace(/^[^ ]+ /,'')}</button>`; else a+=`<span class="chip">✅ готово</span>`;
+    if(vd.pending) a='<span class="chip">⏳ на подтверждении</span>';
     return `<div class="card"><div class="row"><b>Видео #${vd.idx}</b><span class="chip">${lbl[vd.stage]}</span></div><div class="stageline">${segs}</div><div class="row" style="margin-top:10px;gap:6px;justify-content:flex-end">${a}</div></div>`;
   }).join('');
   return `<div class="pills">${pills}</div><div class="card"><div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div><div class="muted">🖼 Графика ${p.graphicDone}/${p.graphicTotal}</div><button class="btn sm full" data-gfx="${p.id}">🖼 +1 графика готова</button></div>${items}`;
@@ -195,7 +196,8 @@ function renderMyWork(){
   if(!w.length) return '<div class="card"><h3>🗂️ Моя работа</h3><div class="muted">Сейчас нет элементов на твоём этапе 🎉</div></div>';
   return w.map(it=>{
     if(it.type==='graphic') return `<div class="card"><div class="row"><b>${esc(it.projectName)}</b><span class="chip">🖼 графика</span></div><div class="muted">Осталось: ${it.left}</div><button class="btn sm full" data-gfx="${it.projectId}">✅ Готова одна</button></div>`;
-    return `<div class="card"><div class="row"><b>${esc(it.projectName)} — Видео #${it.idx}</b><span class="chip">${DATA.stageLabels[it.stage]}</span></div><button class="btn sm full" data-adv="${it.id}">✅ Готово, дальше</button></div>`;
+    const act = it.pending ? '<div class="chip">⏳ на подтверждении</div>' : `<button class="btn sm full" data-adv="${it.id}">✅ Готово, дальше</button>`;
+    return `<div class="card"><div class="row"><b>${esc(it.projectName)} — Видео #${it.idx}</b><span class="chip">${DATA.stageLabels[it.stage]}</span></div>${act}</div>`;
   }).join('');
 }
 
