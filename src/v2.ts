@@ -32,6 +32,14 @@ export function registerV2(bot: Bot) {
   bot.command("menu", async (ctx) => {
     await ctx.reply("🏠 Главное меню:", { reply_markup: views.mainMenu() });
   });
+  bot.command("sync", async (ctx) => {
+    const m = await db.getMember(ctx.from!.id);
+    if (!isAdmin(m, ctx.from!.id)) return ctx.reply("⛔ Только админ.");
+    await ctx.reply("🔄 Синхронизирую из Google-таблиц…");
+    const { syncFromSheets } = await import("./sheets");
+    const r = await syncFromSheets();
+    await ctx.reply(r.text);
+  });
   bot.command("app", async (ctx) => {
     const url = process.env.APP_URL || "https://umc-task-bot.vercel.app";
     await ctx.reply("🚀 Открой приложение:", { reply_markup: new InlineKeyboard().webApp("Открыть UMC Task", url) });

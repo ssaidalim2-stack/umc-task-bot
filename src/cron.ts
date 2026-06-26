@@ -36,6 +36,11 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
     if (dom === 1 && (await d2.claimMarker("report_monthly", day))) sent += await sendReport("Ежемесячный отчёт");
   }
 
+  // синхронизация из Google-таблиц 2 раза в день (09:00 и 18:00)
+  if ([9, 18].includes(hour) && (await d2.claimMarker(`sheetsync_${hour}`, day))) {
+    try { const { syncFromSheets } = await import("./sheets"); await syncFromSheets(); sent++; } catch (e) { console.error("sheetsync", e); }
+  }
+
   // сброс повторяющихся задач
   if (dow === 1 && hour === 6 && (await d2.claimMarker("reset_weekly", day))) await resetRecurring("weekly");
   if (dom === 1 && hour === 6 && (await d2.claimMarker("reset_monthly", day))) await resetRecurring("monthly");
