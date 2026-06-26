@@ -29,8 +29,8 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
     if (await d2.claimMarker(`digest_${hour}`, day)) sent += await sendDigests();
   }
 
-  // отчёты в 20:00
-  if (hour === 20) {
+  // отчёты в 08:00 утра
+  if (hour === 8) {
     if (await d2.claimMarker("report_daily", day)) sent += await sendReport("Ежедневный отчёт");
     if (dow === 1 && (await d2.claimMarker("report_weekly", day))) sent += await sendReport("Еженедельный отчёт");
     if (dom === 1 && (await d2.claimMarker("report_monthly", day))) sent += await sendReport("Ежемесячный отчёт");
