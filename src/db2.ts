@@ -100,6 +100,15 @@ export async function tasksForMember(member: Member): Promise<TaskRow[]> {
   });
 }
 
+export async function createAdhocTask(input: { title: string; description?: string | null; assignee_id?: number | null; assignee_name?: string | null; project_id?: number | null }): Promise<number | null> {
+  const { data } = await supabase.from("tasks").insert({
+    title: input.title, description: input.description ?? null,
+    assignee_id: input.assignee_id ?? null, assignee_name: input.assignee_name ?? null,
+    creator_id: 0, project_id: input.project_id ?? null, kind: "adhoc", status: "new", needs_confirmation: true,
+  }).select("id").single();
+  return data?.id ?? null;
+}
+
 // ---------- subscriptions ----------
 export async function addSubscription(app: string, ownerId: number, purchasedOn: string, periodDays: number): Promise<void> {
   const exp = new Date(new Date(purchasedOn).getTime() + periodDays * 86400000).toISOString().slice(0, 10);

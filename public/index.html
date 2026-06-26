@@ -16,7 +16,7 @@
     --accent:#22c55e;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:72px;font-size:15px}
+  body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:74px;font-size:15px}
   header{padding:14px 16px 6px}
   header h1{margin:0;font-size:20px;font-weight:700}
   header .sub{color:var(--hint);font-size:13px;margin-top:2px}
@@ -32,10 +32,10 @@
   .btn.sec{background:rgba(127,127,127,.18);color:var(--text)}
   .btn.full{width:100%;margin-top:8px}
   .btn.sm{padding:6px 10px;font-size:13px}
-  .vid{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(127,127,127,.15)}
+  .vid{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(127,127,127,.15);gap:8px}
   .vid:last-child{border-bottom:0}
-  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
-  .tabbar button{flex:1;background:none;border:0;color:var(--hint);padding:8px 2px 10px;font-size:11px;cursor:pointer}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;overflow-x:auto;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
+  .tabbar button{flex:0 0 auto;min-width:20%;background:none;border:0;color:var(--hint);padding:8px 6px 10px;font-size:11px;cursor:pointer}
   .tabbar button.active{color:var(--btn)}
   .tabbar .ic{display:block;font-size:20px;margin-bottom:2px}
   .pills{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px}
@@ -46,6 +46,8 @@
   .stageline{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
   .seg{flex:1;min-width:54px;text-align:center;font-size:11px;padding:5px 2px;border-radius:8px;background:rgba(127,127,127,.15)}
   .seg.on{background:var(--accent);color:#062}
+  textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);padding:10px;font-size:15px;font-family:inherit;resize:vertical}
+  .badge{font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(127,127,127,.2)}
 </style>
 </head>
 <body>
@@ -54,109 +56,90 @@
   <div class="sub" id="period">загрузка…</div>
 </header>
 <div class="wrap" id="view"></div>
-
-<div class="tabbar" id="tabs">
-  <button data-t="plan" class="active"><span class="ic">📋</span>План</button>
-  <button data-t="video"><span class="ic">🎬</span>Видео</button>
-  <button data-t="tasks"><span class="ic">✅</span>Задачи</button>
-  <button data-t="report"><span class="ic">📈</span>Отчёт</button>
-  <button data-t="subs"><span class="ic">💳</span>Подписки</button>
-</div>
+<div class="tabbar" id="tabs"></div>
 
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 const INIT = tg.initData || "";
-let DATA=null, TAB="plan", PROJ=null;
+let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="";
+
+const TABMETA={
+  work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"План"}, video:{ic:"🎬",t:"Видео"},
+  tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
+  subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"},
+};
+const SEC=[["video","🎬 Видео"],["design","🎨 Дизайн"],["edit","✂️ Монтаж"]];
 
 async function api(method, body){
-  const r = await fetch('/api/app',{method,headers:{'Content-Type':'application/json','X-Init-Data':INIT},body:body?JSON.stringify(body):undefined});
-  if(!r.ok){ throw new Error('api '+r.status); }
+  const r=await fetch('/api/app',{method,headers:{'Content-Type':'application/json','X-Init-Data':INIT},body:body?JSON.stringify(body):undefined});
+  if(!r.ok) throw new Error('api '+r.status);
   return r.json();
 }
 function haptic(){ try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){} }
-async function load(){ try{ DATA=await api('GET'); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
+async function load(){ try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
 async function act(a){ haptic(); DATA=await api('POST',a); render(); }
 
-function bar(done,total){ const p= total? Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
+function bar(done,total){ const p=total?Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
 function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
-function render(){
-  document.getElementById('period').textContent = DATA.period || '';
-  const v=document.getElementById('view');
-  if(TAB==='plan') v.innerHTML=renderPlan();
-  else if(TAB==='video') v.innerHTML=renderVideo();
-  else if(TAB==='tasks') v.innerHTML=renderTasks();
-  else if(TAB==='report') v.innerHTML=renderReport();
-  else if(TAB==='subs') v.innerHTML=renderSubs();
-  bind();
+function buildTabs(){
+  const el=document.getElementById('tabs');
+  el.innerHTML=DATA.tabs.map(t=>`<button data-t="${t}" class="${t===TAB?'active':''}"><span class="ic">${TABMETA[t].ic}</span>${TABMETA[t].t}</button>`).join('');
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;buildTabs();render();});
 }
 
+function render(){
+  document.getElementById('period').textContent=(DATA.user.role?roleLabel(DATA.user.role)+' · ':'')+(DATA.period||'');
+  const v=document.getElementById('view');
+  const map={plan:renderPlan,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
+  v.innerHTML=(map[TAB]||renderTasks)();
+  bind();
+}
+function roleLabel(r){return {admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",member:"Сотрудник"}[r]||"";}
+
 function renderPlan(){
-  return DATA.projects.map(p=>{
-    const pub=p.video.published||0;
-    return `<div class="card">
-      <div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div>
-      <div class="muted">🎬 Видео: ${pub}/${p.videoTotal} опубликовано</div>${bar(pub,p.videoTotal)}
-      <div class="muted">🖼 Графика: ${p.graphicDone}/${p.graphicTotal}</div>${bar(p.graphicDone,p.graphicTotal)}
-      <button class="btn sm sec" data-go-video="${p.id}">Открыть видео →</button>
-    </div>`;
-  }).join('');
+  return DATA.projects.map(p=>{const pub=p.video.published||0;return `<div class="card">
+    <div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div>
+    <div class="muted">🎬 Видео: ${pub}/${p.videoTotal}</div>${bar(pub,p.videoTotal)}
+    <div class="muted">🖼 Графика: ${p.graphicDone}/${p.graphicTotal}</div>${bar(p.graphicDone,p.graphicTotal)}
+    <button class="btn sm sec" data-go-video="${p.id}">Открыть видео →</button></div>`;}).join('');
 }
 
 function renderVideo(){
   if(!PROJ) PROJ=DATA.projects[0]?.id;
   const pills=DATA.projects.map(p=>`<div class="pill ${p.id==PROJ?'active':''}" data-proj="${p.id}">${esc(p.name)}</div>`).join('');
-  const p=DATA.projects.find(x=>x.id==PROJ);
-  if(!p) return '<div class="empty">Нет проектов</div>';
+  const p=DATA.projects.find(x=>x.id==PROJ); if(!p) return '<div class="empty">Нет проектов</div>';
   const stages=DATA.stages, lbl=DATA.stageLabels;
   const items=p.videos.map(vd=>{
-    const segs=stages.map(s=>{ const idx=stages.indexOf(s), cur=stages.indexOf(vd.stage); return `<div class="seg ${idx<=cur?'on':''}">${lbl[s].replace(/^[^ ]+ /,'')}</div>`;}).join('');
-    const nx = stages[stages.indexOf(vd.stage)+1];
-    let actions='';
-    if(vd.stage==='idea'){
-      actions+=`<button class="btn sm ${vd.format==='fun'?'':'sec'}" data-fmt="${vd.id}:fun">🎭</button>
-                <button class="btn sm ${vd.format==='sell'?'':'sec'}" data-fmt="${vd.id}:sell">💰</button>`;
-    }
-    if(nx) actions+=`<button class="btn sm" data-adv="${vd.id}">→ ${lbl[nx].replace(/^[^ ]+ /,'')}</button>`;
-    else actions+=`<span class="chip">✅ готово</span>`;
-    return `<div class="card"><div class="row"><b>Видео #${vd.idx}</b><span class="chip">${lbl[vd.stage]}</span></div>
-      <div class="stageline">${segs}</div>
-      <div class="row" style="margin-top:10px;gap:6px;justify-content:flex-end">${actions}</div></div>`;
+    const segs=stages.map(s=>{const i=stages.indexOf(s),c=stages.indexOf(vd.stage);return `<div class="seg ${i<=c?'on':''}">${lbl[s].replace(/^[^ ]+ /,'')}</div>`;}).join('');
+    const nx=stages[stages.indexOf(vd.stage)+1]; let a='';
+    if(vd.stage==='idea') a+=`<button class="btn sm ${vd.format==='fun'?'':'sec'}" data-fmt="${vd.id}:fun">🎭</button><button class="btn sm ${vd.format==='sell'?'':'sec'}" data-fmt="${vd.id}:sell">💰</button>`;
+    if(nx) a+=`<button class="btn sm" data-adv="${vd.id}">→ ${lbl[nx].replace(/^[^ ]+ /,'')}</button>`; else a+=`<span class="chip">✅ готово</span>`;
+    return `<div class="card"><div class="row"><b>Видео #${vd.idx}</b><span class="chip">${lbl[vd.stage]}</span></div><div class="stageline">${segs}</div><div class="row" style="margin-top:10px;gap:6px;justify-content:flex-end">${a}</div></div>`;
   }).join('');
-  return `<div class="pills">${pills}</div>
-    <div class="card"><div class="row"><h3>${esc(p.name)}</h3></div>
-    <div class="muted">🖼 Графика ${p.graphicDone}/${p.graphicTotal}</div>
-    <button class="btn sm full" data-gfx="${p.id}">🖼 +1 графика готова</button></div>
-    ${items}`;
+  return `<div class="pills">${pills}</div><div class="card"><div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div><div class="muted">🖼 Графика ${p.graphicDone}/${p.graphicTotal}</div><button class="btn sm full" data-gfx="${p.id}">🖼 +1 графика готова</button></div>${items}`;
 }
 
 function renderTasks(){
-  let html='';
-  html+=`<div class="card"><h3>✅ Мои задачи</h3>`;
-  if(!DATA.myTasks.length) html+='<div class="muted">Активных задач нет 🎉</div>';
-  html+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-done="${t.id}">Выполнил</button></div>`).join('');
-  html+='</div>';
-  if(DATA.confirmable.length){
-    html+=`<div class="card"><h3>🔔 На подтверждение</h3>`;
-    html+=DATA.confirmable.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-confirm="${t.id}">Подтвердить</button></div>`).join('');
-    html+='</div>';
-  }
-  return html;
+  let h=`<div class="card"><h3>✅ Мои задачи</h3>`;
+  if(!DATA.myTasks.length) h+='<div class="muted">Активных задач нет 🎉</div>';
+  h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-done="${t.id}">Выполнил</button></div>`).join('');
+  h+='</div>';
+  if(DATA.confirmable.length){h+=`<div class="card"><h3>🔔 На подтверждение</h3>`+DATA.confirmable.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-confirm="${t.id}">Подтвердить</button></div>`).join('')+'</div>';}
+  return h;
 }
 
 function renderReport(){
   const t=DATA.totals;
   const labels=DATA.projects.map(p=>p.name.split(' ')[0]);
-  const pub=DATA.projects.map(p=>p.video.published||0);
-  const tot=DATA.projects.map(p=>p.videoTotal);
+  const pub=DATA.projects.map(p=>p.video.published||0), tot=DATA.projects.map(p=>p.videoTotal);
   const chart={type:'bar',data:{labels,datasets:[{label:'Опубл.',data:pub,backgroundColor:'#22c55e'},{label:'План',data:tot,backgroundColor:'#94a3b8'}]}};
   const url='https://quickchart.io/chart?w=560&h=320&c='+encodeURIComponent(JSON.stringify(chart));
   return `<div class="card"><h3>📈 Сводка</h3>
     <div class="muted">🎬 Видео опубликовано: <b>${t.published}/${t.videoTotal}</b></div>${bar(t.published,t.videoTotal)}
     <div class="muted">🖼 Графика готова: <b>${t.graphicDone}/${t.graphicTotal}</b></div>${bar(t.graphicDone,t.graphicTotal)}
-    <div class="muted">📌 Открытых задач: <b>${t.openTasks}</b></div>
-  </div>
-  <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>`;
+    <div class="muted">📌 Открытых задач: <b>${t.openTasks}</b></div></div>
+    <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>`;
 }
 
 function renderSubs(){
@@ -164,17 +147,58 @@ function renderSubs(){
   return `<div class="card"><h3>💳 Подписки</h3>`+DATA.subscriptions.map(s=>`<div class="vid"><span>${esc(s.app)}</span><span class="muted">до ${s.expires_on}</span></div>`).join('')+`</div>`;
 }
 
+function renderWork(){
+  const team=DATA.team||[];
+  if(WORK_EMP>=team.length) WORK_EMP=0;
+  const chips=team.map((m,i)=>`<div class="pill ${i==WORK_EMP?'active':''}" data-emp="${i}">${esc(m.name)}</div>`).join('');
+  const m=team[WORK_EMP];
+  if(!m) return '<div class="empty">Нет сотрудников</div>';
+  let body=`<div class="card"><div class="row"><h3>${esc(m.name)}</h3><span class="badge">${m.role}</span></div>`;
+  if(!m.registered) body+='<div class="muted">Ещё не заходил в бота (/start)</div>';
+  if(!m.tasks.length) body+='<div class="muted">Активных задач нет</div>';
+  body+=m.tasks.map(t=>{
+    const st=t.status==='await_confirm'?'<span class="badge">на подтв.</span>':'';
+    const btn=t.status==='await_confirm'?`<button class="btn sm" data-confirm="${t.id}">✅</button>`:'';
+    return `<div class="vid"><span>${esc(t.title)} ${st}</span>${btn}</div>`;
+  }).join('');
+  body+='</div>';
+  return `<div class="pills">${chips}</div>${body}`;
+}
+
+function renderTZ(){
+  const secPills=SEC.map(([k,l])=>`<div class="pill ${k==TZ_SEC?'active':''}" data-sec="${k}">${l}</div>`).join('');
+  const projPills=`<div class="pill ${TZ_PROJ===''?'active':''}" data-tzp="">Общее</div>`+DATA.projects.map(p=>`<div class="pill ${TZ_PROJ==p.id?'active':''}" data-tzp="${p.id}">${esc(p.name)}</div>`).join('');
+  return `<div class="card"><h3>✍️ Дать ТЗ</h3>
+    <div class="muted">Раздел:</div><div class="pills">${secPills}</div>
+    <div class="muted">Проект:</div><div class="pills">${projPills}</div>
+    <textarea id="tzText" placeholder="Опиши задачу в письменном формате…"></textarea>
+    <button class="btn full" data-tz-send>📨 Отправить ТЗ</button>
+    <div class="muted" style="margin-top:8px">ТЗ уйдёт исполнителю раздела в личку и в привязанную группу проекта.</div></div>`;
+}
+
+function renderMyWork(){
+  const w=DATA.myWork||[];
+  if(!w.length) return '<div class="card"><h3>🗂️ Моя работа</h3><div class="muted">Сейчас нет элементов на твоём этапе 🎉</div></div>';
+  return w.map(it=>{
+    if(it.type==='graphic') return `<div class="card"><div class="row"><b>${esc(it.projectName)}</b><span class="chip">🖼 графика</span></div><div class="muted">Осталось: ${it.left}</div><button class="btn sm full" data-gfx="${it.projectId}">✅ Готова одна</button></div>`;
+    return `<div class="card"><div class="row"><b>${esc(it.projectName)} — Видео #${it.idx}</b><span class="chip">${DATA.stageLabels[it.stage]}</span></div><button class="btn sm full" data-adv="${it.id}">✅ Готово, дальше</button></div>`;
+  }).join('');
+}
+
 function bind(){
-  document.querySelectorAll('[data-go-video]').forEach(b=>b.onclick=()=>{PROJ=+b.dataset.goVideo;TAB='video';setTab();render();});
+  document.querySelectorAll('[data-go-video]').forEach(b=>b.onclick=()=>{PROJ=+b.dataset.goVideo;TAB=DATA.tabs.includes('video')?'video':TAB;buildTabs();render();});
   document.querySelectorAll('[data-proj]').forEach(b=>b.onclick=()=>{PROJ=+b.dataset.proj;render();});
   document.querySelectorAll('[data-adv]').forEach(b=>b.onclick=()=>act({type:'vid_adv',id:+b.dataset.adv}));
   document.querySelectorAll('[data-fmt]').forEach(b=>b.onclick=()=>{const[id,f]=b.dataset.fmt.split(':');act({type:'vid_fmt',id:+id,format:f});});
   document.querySelectorAll('[data-gfx]').forEach(b=>b.onclick=()=>act({type:'gfx_done',projectId:+b.dataset.gfx}));
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick=()=>act({type:'task_done',id:+b.dataset.done}));
   document.querySelectorAll('[data-confirm]').forEach(b=>b.onclick=()=>act({type:'task_confirm',id:+b.dataset.confirm}));
+  document.querySelectorAll('[data-emp]').forEach(b=>b.onclick=()=>{WORK_EMP=+b.dataset.emp;render();});
+  document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{TZ_SEC=b.dataset.sec;render();});
+  document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{TZ_PROJ=b.dataset.tzp;render();});
+  const send=document.querySelector('[data-tz-send]');
+  if(send) send.onclick=async()=>{const ta=document.getElementById('tzText');const text=(ta.value||'').trim();if(!text){tg.showAlert&&tg.showAlert('Введите текст ТЗ');return;}await act({type:'tz',section:TZ_SEC,projectId:TZ_PROJ||null,text});tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
 }
-function setTab(){ document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('active',x.dataset.t===TAB)); }
-document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;setTab();render();});
 
 load();
 </script>
