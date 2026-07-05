@@ -72,6 +72,7 @@ const EXEC=["Самандар","Асрор","Владимир"];
 const SEC_DEFAULT={video:"Самандар",design:"Владимир",edit:"Асрор"};
 // состояние таблицы
 let TBL_PROJ=null, TBL_PLAN=null, TBL_ITEMS=null, TBL_OPEN=null, TBL_LOADED=null, TBL_NEWPERIOD=false;
+let ASSIGN_I=0;
 const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["photo","📷 Фото"]];
 const TYPE_ICON={video:"🎬",graphic:"🖼",photo:"📷"};
 function STATUS_OPTS(type){ return type==='video'
@@ -196,7 +197,24 @@ function renderTasks(){
   if(!DATA.myTasks.length) h+='<div class="muted">Активных задач нет 🎉</div>';
   h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-done="${t.id}">Выполнил</button></div>`).join('');
   h+='</div>';
-  if(DATA.confirmable.length){h+=`<div class="card"><h3>🔔 На подтверждение</h3>`+DATA.confirmable.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-confirm="${t.id}">Подтвердить</button></div>`).join('')+'</div>';}
+  if(DATA.confirmable&&DATA.confirmable.length){
+    h+=`<div class="card"><h3>🔔 Требуют моего утверждения</h3>`;
+    h+=DATA.confirmable.map(t=>{
+      const stLabel=t.final?'финал (от менеджера)':'от исполнителя';
+      const btn=t.final?'✅ Утвердить (финал)':'✅ Утвердить';
+      return `<div class="vid"><div style="min-width:0"><span>${esc(t.title)}</span><br><span class="muted">${esc(t.who)} · ${stLabel}</span></div><div style="display:flex;gap:6px"><button class="btn sm" data-approve="${t.id}">${btn}</button><button class="btn sm sec" data-reject="${t.id}">↩️</button></div></div>`;
+    }).join('');
+    h+='</div>';
+  }
+  if(canEdit()){
+    const team=DATA.team||[];
+    if(ASSIGN_I>=team.length) ASSIGN_I=0;
+    const pills=team.map((m,i)=>`<div class="pill ${i==ASSIGN_I?'active':''}" data-assignto="${i}">${esc(m.name)}</div>`).join('');
+    h+=`<div class="card"><h3>➕ Назначить задачу</h3>
+      <div class="muted">Исполнитель:</div><div class="pills">${pills}</div>
+      <input id="assignTitle" placeholder="Что нужно сделать…">
+      <button class="btn full" data-assign-send style="margin-top:8px">📌 Назначить</button></div>`;
+  }
   return h;
 }
 
@@ -228,8 +246,9 @@ function renderWork(){
   if(!m.registered) body+='<div class="muted">Ещё не заходил в бота (/start)</div>';
   if(!m.tasks.length) body+='<div class="muted">Активных задач нет</div>';
   body+=m.tasks.map(t=>{
-    const st=t.status==='await_confirm'?'<span class="badge">на подтв.</span>':'';
-    const btn=t.status==='await_confirm'?`<button class="btn sm" data-confirm="${t.id}">✅</button>`:'';
+    const pend=['await_manager','await_admin','await_confirm'].includes(t.status);
+    const st=pend?'<span class="badge">на утв.</span>':'';
+    const btn=pend?`<button class="btn sm" data-approve="${t.id}">✅</button>`:'';
     return `<div class="vid"><span>${esc(t.title)} ${st}</span>${btn}</div>`;
   }).join('');
   body+='</div>';
@@ -267,6 +286,10 @@ function bind(){
   document.querySelectorAll('[data-gfx]').forEach(b=>b.onclick=()=>act({type:'gfx_done',projectId:+b.dataset.gfx}));
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick=()=>act({type:'task_done',id:+b.dataset.done}));
   document.querySelectorAll('[data-confirm]').forEach(b=>b.onclick=()=>act({type:'task_confirm',id:+b.dataset.confirm}));
+  document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({type:'task_approve',id:+b.dataset.approve}));
+  document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>act({type:'task_reject',id:+b.dataset.reject}));
+  document.querySelectorAll('[data-assignto]').forEach(b=>b.onclick=()=>{ASSIGN_I=+b.dataset.assignto;render();});
+  const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=DATA.team||[];const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assignee:m.anchor,title});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
   document.querySelectorAll('[data-emp]').forEach(b=>b.onclick=()=>{WORK_EMP=+b.dataset.emp;render();});
   document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{TZ_SEC=b.dataset.sec;TZ_EXEC=SEC_DEFAULT[TZ_SEC]||TZ_EXEC;render();});
   document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{TZ_EXEC=b.dataset.exec;render();});

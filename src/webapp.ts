@@ -117,7 +117,16 @@ export async function getData(userId: number) {
 
   const myTasks = memTasks(member!).filter((t) => t.status === "new" || t.status === "in_progress");
   const canConfirm = role === "admin" || role === "manager";
-  const confirmable = canConfirm ? openTasks.filter((t) => t.status === "await_confirm").map((t) => ({ id: t.id, title: t.title })) : [];
+  const nameOf = (t: any) => {
+    if (t.assignee_id) { const m = members.find((x) => x.telegram_id === t.assignee_id); return m?.name || t.assignee_name || "—"; }
+    return t.assignee_name || "—";
+  };
+  const needsMine = (t: any) => role === "admin"
+    ? ["await_admin", "await_manager", "await_confirm"].includes(t.status)
+    : role === "manager" ? ["await_manager", "await_confirm"].includes(t.status) : false;
+  const confirmable = canConfirm
+    ? openTasks.filter(needsMine).map((t) => ({ id: t.id, title: t.title, status: t.status, who: nameOf(t), final: t.status === "await_admin" }))
+    : [];
 
   let pub = 0, vt = 0, gd = 0, gt = 0;
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
@@ -197,12 +206,47 @@ export async function doAction(userId: number, action: any) {
     case "task_done": {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
-      await d2.setTaskStatus(t.id, "await_confirm");
+      const assignee = t.assignee_id ? await db.getMember(t.assignee_id) : (t.assignee_name ? await d2.resolveMember(t.assignee_name) : null);
+      const aRole = assignee ? roleOf(assignee, isAdminId(assignee, assignee.telegram_id)) : "member";
+      const next = aRole === "manager" || aRole === "admin" ? "await_admin" : "await_manager";
+      await d2.setTaskStatus(t.id, next);
       const who = member?.name || "Исполнитель";
-      for (const cid of await confirmers()) {
+      const recips = next === "await_admin" ? await adminRecipients() : await managerRecipients();
+      for (const cid of recips) {
         if (cid === userId) continue;
-        try { await bot.api.sendMessage(cid, `🔔 ${who} выполнил задачу «${t.title}». Подтверди в приложении.`); } catch {}
+        try { await bot.api.sendMessage(cid, `🔔 ${who} выполнил задачу «${t.title}». Нужно твоё утверждение (в приложении → Задачи).`); } catch {}
       }
+      break;
+    }
+    case "task_approve": {
+      const t = await d2.getTaskRow(+action.id);
+      if (!t) break;
+      if (role === "admin") {
+        await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
+        if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" });
+        if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» полностью утверждена. Отлично!`); } catch {} }
+      } else if (role === "manager" && (t.status === "await_manager" || t.status === "await_confirm")) {
+        await d2.setTaskStatus(t.id, "await_admin");
+        for (const cid of await adminRecipients()) { try { await bot.api.sendMessage(cid, `🔔 Менеджер утвердил «${t.title}». Нужно твоё финальное утверждение.`); } catch {} }
+        if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `👍 Менеджер принял «${t.title}», ждём финального утверждения.`); } catch {} }
+      }
+      break;
+    }
+    case "task_reject": {
+      if (role !== "admin" && role !== "manager") break;
+      const t = await d2.getTaskRow(+action.id);
+      if (!t) break;
+      await d2.setTaskStatus(t.id, "in_progress");
+      if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `↩️ Задачу «${t.title}» вернули на доработку.`); } catch {} }
+      break;
+    }
+    case "task_assign": {
+      if (role !== "admin" && role !== "manager") break;
+      const title = (action.title || "").trim();
+      if (!title || !action.assignee) break;
+      const ex = await d2.resolveMember(action.assignee);
+      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: action.assignee, project_id: action.projectId ? +action.projectId : null });
+      if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}`); } catch {} }
       break;
     }
     case "task_confirm": {
@@ -275,6 +319,18 @@ async function notifyStage(projectId: number, idx: number, stage: string) {
     if (m) { try { await bot.api.sendMessage(m.telegram_id, msg); } catch {} }
   }
   for (const b of await d2.bindingsFor(projectId, stage)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
+}
+
+async function managerRecipients(): Promise<number[]> {
+  const ids = new Set<number>();
+  const m = await d2.resolveMember("Бобур");
+  if (m) ids.add(m.telegram_id);
+  return [...ids];
+}
+async function adminRecipients(): Promise<number[]> {
+  const ids = new Set<number>(ENV_ADMINS);
+  (await db.listAdmins()).forEach((a) => ids.add(a.telegram_id));
+  return [...ids];
 }
 
 async function confirmers(): Promise<number[]> {
