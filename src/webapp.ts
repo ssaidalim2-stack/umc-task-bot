@@ -62,11 +62,20 @@ function isAdminId(member: db.Member | null, id: number) {
   return Boolean(member?.is_admin) || ENV_ADMINS.includes(id);
 }
 
+// поля пункта контент-плана храним JSON-ом в content_items.title (без изменения схемы)
+function parseItemData(title: string | null): any {
+  try { const d = JSON.parse(title || "{}"); return d && typeof d === "object" ? d : {}; } catch { return title ? { script: title } : {}; }
+}
+function serializeItem(v: any) {
+  const d = parseItemData(v.title);
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
+}
+
 // ---------- сбор данных ----------
 export async function getData(userId: number) {
   // один «залп» параллельных запросов вместо десятков последовательных
   const [member0, projects, plans, items, members, openTasks, subs] = await Promise.all([
-    db.getMember(userId), d2.getProjects(), d2.getAllActivePlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(),
+    db.getMember(userId), d2.getProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(),
   ]);
   let member = member0;
   if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
@@ -74,12 +83,16 @@ export async function getData(userId: number) {
   const role = roleOf(member, isAdmin);
   const tabs = TABS_BY_ROLE[role] || ["tasks"];
 
-  const planByProject = new Map(plans.map((p) => [p.project_id, p]));
-  const period = plans[0]?.period || "";
+  const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
+  const plansByProject = new Map<number, any[]>();
+  for (const pl of plans) { const a = plansByProject.get(pl.project_id) || []; a.push({ id: pl.id, period: pl.period, is_active: pl.is_active }); plansByProject.set(pl.project_id, a); }
+  const planByProject = activePlanByProject;
+  const period = plans.find((p) => p.is_active)?.period || plans[0]?.period || "";
   const pendingPublish = new Set(openTasks.filter((t) => t.status === "await_confirm" && t.item_id).map((t) => t.item_id));
 
+  const activePlanIds = new Set([...activePlanByProject.values()].map((p: any) => p.id));
   const itemsByProject = new Map<number, any[]>();
-  for (const it of items) { const a = itemsByProject.get(it.project_id) || []; a.push(it); itemsByProject.set(it.project_id, a); }
+  for (const it of items) { if (!activePlanIds.has(it.plan_id)) continue; const a = itemsByProject.get(it.project_id) || []; a.push(it); itemsByProject.set(it.project_id, a); }
 
   const projOut = projects.map((p) => {
     const its = itemsByProject.get(p.id) || [];
@@ -89,6 +102,7 @@ export async function getData(userId: number) {
     for (const v of videos) video[v.stage] = (video[v.stage] || 0) + 1;
     return {
       id: p.id, key: p.key, name: p.name, sheet_url: planByProject.get(p.id)?.sheet_url || null,
+      plans: plansByProject.get(p.id) || [],
       video, videoTotal: videos.length,
       graphicDone: graphics.filter((g) => g.stage === "done").length, graphicTotal: graphics.length,
       videos: videos.map((v) => ({ id: v.id, idx: v.idx, stage: v.stage, format: v.format, pending: pendingPublish.has(v.id) })),
@@ -214,6 +228,39 @@ export async function doAction(userId: number, action: any) {
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
       if (specialist) { try { await bot.api.sendMessage(specialist.telegram_id, msg); } catch {} }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
+      break;
+    }
+
+    // ---- редактируемая таблица контент-плана ----
+    case "plan_items": {
+      const its = await d2.listItemsByPlan(+action.planId);
+      return { items: its.map(serializeItem) };
+    }
+    case "item_add": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const its = await d2.listItemsByPlan(+action.planId);
+      const nextIdx = its.reduce((m, i) => Math.max(m, i.idx), 0) + 1;
+      await d2.addContentItem({ plan_id: +action.planId, project_id: +action.projectId, type: action.itemType || "video", idx: nextIdx });
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "item_update": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const f = action.fields || {};
+      const data = { script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const patch: any = { title: JSON.stringify(data) };
+      if (f.type) patch.type = f.type;
+      if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
+      await d2.updateItem(+action.id, patch);
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "item_delete": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      await d2.deleteContentItem(+action.id);
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "plan_create": {
+      if (role !== "admin" && role !== "manager") break;
+      await d2.createPlan(+action.projectId, (action.period || "Новый период").trim());
       break;
     }
   }

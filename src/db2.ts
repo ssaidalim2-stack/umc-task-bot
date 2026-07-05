@@ -20,6 +20,25 @@ export async function getAllActivePlans(): Promise<ContentPlan[]> {
   const { data } = await supabase.from("content_plans").select("*").eq("is_active", true);
   return (data as ContentPlan[]) ?? [];
 }
+export async function getAllPlans(): Promise<ContentPlan[]> {
+  const { data } = await supabase.from("content_plans").select("*").order("id");
+  return (data as ContentPlan[]) ?? [];
+}
+export async function listItemsByPlan(planId: number): Promise<ContentItem[]> {
+  const { data } = await supabase.from("content_items").select("*").eq("plan_id", planId).order("idx");
+  return (data as ContentItem[]) ?? [];
+}
+export async function createPlan(projectId: number, period: string): Promise<number | null> {
+  const { data } = await supabase.from("content_plans").insert({ project_id: projectId, period, is_active: false, video_target: 0, graphic_target: 0 }).select("id").single();
+  return data?.id ?? null;
+}
+export async function addContentItem(input: { plan_id: number; project_id: number; type: string; idx: number }): Promise<void> {
+  const stage = input.type === "video" ? "idea" : "todo";
+  await supabase.from("content_items").insert({ plan_id: input.plan_id, project_id: input.project_id, type: input.type, idx: input.idx, stage, status: "in_progress" });
+}
+export async function deleteContentItem(id: number): Promise<void> {
+  await supabase.from("content_items").delete().eq("id", id);
+}
 export async function getAllItems(): Promise<ContentItem[]> {
   const { data } = await supabase.from("content_items").select("*").order("idx");
   return (data as ContentItem[]) ?? [];
