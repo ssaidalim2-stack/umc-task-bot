@@ -106,6 +106,10 @@ export async function listOpenTasks(): Promise<TaskRow[]> {
   const { data } = await supabase.from("tasks").select("*").not("status", "in", "(done,cancelled)").order("id");
   return (data as TaskRow[]) ?? [];
 }
+export async function recentDoneTasks(limit = 15): Promise<TaskRow[]> {
+  const { data } = await supabase.from("tasks").select("*").eq("status", "done").order("updated_at", { ascending: false }).limit(limit);
+  return (data as TaskRow[]) ?? [];
+}
 export async function getTaskRow(id: number): Promise<TaskRow | null> {
   const { data } = await supabase.from("tasks").select("*").eq("id", id).maybeSingle();
   return (data as TaskRow) ?? null;

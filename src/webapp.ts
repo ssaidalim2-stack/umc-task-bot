@@ -37,8 +37,8 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["work", "plan", "video", "tz", "tasks", "report", "subs"],
-  manager: ["work", "tz", "plan", "tasks", "report"],
+  admin: ["board", "work", "plan", "video", "tz", "tasks", "report", "subs"],
+  manager: ["board", "work", "tz", "plan", "tasks", "report"],
   videographer: ["mywork", "tasks"],
   editor: ["mywork", "tasks"],
   designer: ["mywork", "tasks"],
@@ -74,8 +74,8 @@ function serializeItem(v: any) {
 // ---------- сбор данных ----------
 export async function getData(userId: number) {
   // один «залп» параллельных запросов вместо десятков последовательных
-  const [member0, projects, plans, items, members, openTasks, subs] = await Promise.all([
-    db.getMember(userId), d2.getProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(),
+  const [member0, projects, plans, items, members, openTasks, subs, doneTasks] = await Promise.all([
+    db.getMember(userId), d2.getProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(), d2.recentDoneTasks(15),
   ]);
   let member = member0;
   if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
@@ -128,6 +128,18 @@ export async function getData(userId: number) {
     ? openTasks.filter(needsMine).map((t) => ({ id: t.id, title: t.title, status: t.status, who: nameOf(t), final: t.status === "await_admin" }))
     : [];
 
+  // доска (kanban по статусам) — для админа/менеджера
+  let board: any = null;
+  if (canConfirm) {
+    const mk = (t: any) => ({ title: t.title, who: nameOf(t) });
+    board = {
+      new: openTasks.filter((t) => t.status === "new" || t.status === "in_progress").map(mk),
+      manager: openTasks.filter((t) => t.status === "await_manager").map(mk),
+      admin: openTasks.filter((t) => t.status === "await_admin" || t.status === "await_confirm").map(mk),
+      done: doneTasks.map(mk),
+    };
+  }
+
   let pub = 0, vt = 0, gd = 0, gt = 0;
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
 
@@ -159,7 +171,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, myWork,
+    confirmable, team, myWork, board,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };

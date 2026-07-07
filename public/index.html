@@ -54,6 +54,11 @@
   .ctab th,.ctab td{padding:7px 4px;text-align:center;border-bottom:1px solid rgba(127,127,127,.15);white-space:nowrap}
   .ctab th{color:var(--hint);font-weight:600}
   .ctab td:first-child,.ctab th:first-child{text-align:left;position:sticky;left:0;background:var(--card)}
+  .board{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 10px}
+  .bcol{flex:0 0 80%;max-width:300px;background:var(--card);border-radius:12px;padding:10px}
+  .bhead{font-weight:700;font-size:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .bcount{font-size:12px;color:var(--hint);background:rgba(127,127,127,.2);border-radius:10px;padding:1px 8px}
+  .bcard{background:var(--bg);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:13px}
 </style>
 </head>
 <body>
@@ -84,7 +89,7 @@ function val(id){ const e=document.getElementById(id); return e?e.value:''; }
 function captureFields(it){ if(document.getElementById('f_script')){ it.script=val('f_script'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } }
 
 const TABMETA={
-  work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
+  board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
   subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"},
 };
@@ -111,7 +116,7 @@ function buildTabs(){
 function render(){
   document.getElementById('period').textContent=(DATA.user.role?roleLabel(DATA.user.role)+' · ':'')+(DATA.period||'');
   const v=document.getElementById('view');
-  const map={plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
+  const map={board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
 }
@@ -190,6 +195,18 @@ function renderVideo(){
     return `<div class="card"><div class="row"><b>Видео #${vd.idx}</b><span class="chip">${lbl[vd.stage]}</span></div><div class="stageline">${segs}</div><div class="row" style="margin-top:10px;gap:6px;justify-content:flex-end">${a}</div></div>`;
   }).join('');
   return `<div class="pills">${pills}</div><div class="card"><div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div><div class="muted">🖼 Графика ${p.graphicDone}/${p.graphicTotal}</div><button class="btn sm full" data-gfx="${p.id}">🖼 +1 графика готова</button></div>${items}`;
+}
+
+function renderBoard(){
+  const b=DATA.board; if(!b) return '<div class="empty">Нет доступа</div>';
+  const col=(title,items)=>`<div class="bcol"><div class="bhead"><span>${title}</span><span class="bcount">${items.length}</span></div>${items.length?items.map(t=>`<div class="bcard"><div>${esc(t.title)}</div><div class="muted">👤 ${esc(t.who)}</div></div>`).join(''):'<div class="muted">—</div>'}</div>`;
+  return `<div class="muted" style="margin:2px 0 8px">Свайпай колонки →</div>
+    <div class="board">
+      ${col('🆕 Назначено',b.new)}
+      ${col('🔵 У менеджера',b.manager)}
+      ${col('🟢 На финале',b.admin)}
+      ${col('✅ Готово',b.done)}
+    </div>`;
 }
 
 function renderTasks(){
