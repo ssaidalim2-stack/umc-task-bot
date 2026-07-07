@@ -75,6 +75,14 @@ const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC="Самандар";
 const EXEC=["Самандар","Асрор","Владимир"];
 const SEC_DEFAULT={video:"Самандар",design:"Владимир",edit:"Асрор"};
+// шаблоны ТЗ по разделам: [id, label, многострочное]
+const TZ_TEMPLATES={
+  video:[["idea","Идея / сценарий",true],["reference","Референс",false],["props","Реквизиты",true],["shoot","Дата съёмки",false],["deadline","Дедлайн",false],["notes","Примечания",true]],
+  edit:[["script","Сценарий",true],["reference","Референс",false],["deadline","Дедлайн",false],["style","Стиль",false],["notes","Примечания",true]],
+  design:[["format","Формат (напр. 4:5)",false],["text","Текст (Headline / Subheadline)",true],["style","Стиль",false],["colors","Цвета",false],["fonts","Шрифты",false],["reference","Референс",false],["elements","Элементы",true],["deadline","Дедлайн",false],["notes","Доп. комментарии",true]],
+};
+let TZ_FIELDS={};
+function captureTZ(){ (TZ_TEMPLATES[TZ_SEC]||[]).forEach(([id])=>{ const e=document.getElementById('tz_'+id); if(e) TZ_FIELDS[id]=e.value; }); }
 // состояние таблицы
 let TBL_PROJ=null, TBL_PLAN=null, TBL_ITEMS=null, TBL_OPEN=null, TBL_LOADED=null, TBL_NEWPERIOD=false;
 let ASSIGN_I=0;
@@ -276,13 +284,19 @@ function renderTZ(){
   const secPills=SEC.map(([k,l])=>`<div class="pill ${k==TZ_SEC?'active':''}" data-sec="${k}">${l}</div>`).join('');
   const execPills=EXEC.map(n=>`<div class="pill ${n==TZ_EXEC?'active':''}" data-exec="${n}">${n}</div>`).join('');
   const projPills=`<div class="pill ${TZ_PROJ===''?'active':''}" data-tzp="">Общее</div>`+DATA.projects.map(p=>`<div class="pill ${TZ_PROJ==p.id?'active':''}" data-tzp="${p.id}">${esc(p.name)}</div>`).join('');
+  const fields=(TZ_TEMPLATES[TZ_SEC]||[]).map(([id,label,big])=>{
+    const v=esc(TZ_FIELDS[id]||'');
+    return big
+      ? `<div class="muted">${label}:</div><textarea id="tz_${id}" style="min-height:60px">${v}</textarea>`
+      : `<div class="muted">${label}:</div><input id="tz_${id}" value="${v}">`;
+  }).join('');
   return `<div class="card"><h3>✍️ Дать ТЗ</h3>
     <div class="muted">Раздел:</div><div class="pills">${secPills}</div>
     <div class="muted">Исполнитель:</div><div class="pills">${execPills}</div>
     <div class="muted">Проект:</div><div class="pills">${projPills}</div>
-    <textarea id="tzText" placeholder="Опиши задачу в письменном формате…"></textarea>
+    <div style="border-top:1px solid rgba(127,127,127,.2);margin:8px 0;padding-top:6px">${fields}</div>
     <button class="btn full" data-tz-send>📨 Отправить ТЗ</button>
-    <div class="muted" style="margin-top:8px">ТЗ уйдёт выбранному исполнителю в личку и в привязанную группу проекта.</div></div>`;
+    <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
 }
 
 function renderMyWork(){
@@ -308,11 +322,11 @@ function bind(){
   document.querySelectorAll('[data-assignto]').forEach(b=>b.onclick=()=>{ASSIGN_I=+b.dataset.assignto;render();});
   const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=DATA.team||[];const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assignee:m.anchor,title});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
   document.querySelectorAll('[data-emp]').forEach(b=>b.onclick=()=>{WORK_EMP=+b.dataset.emp;render();});
-  document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{TZ_SEC=b.dataset.sec;TZ_EXEC=SEC_DEFAULT[TZ_SEC]||TZ_EXEC;render();});
-  document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{TZ_EXEC=b.dataset.exec;render();});
-  document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{TZ_PROJ=b.dataset.tzp;render();});
+  document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=SEC_DEFAULT[TZ_SEC]||TZ_EXEC;render();});
+  document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=b.dataset.exec;render();});
+  document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{captureTZ();TZ_PROJ=b.dataset.tzp;render();});
   const send=document.querySelector('[data-tz-send]');
-  if(send) send.onclick=async()=>{const ta=document.getElementById('tzText');const text=(ta.value||'').trim();if(!text){tg.showAlert&&tg.showAlert('Введите текст ТЗ');return;}await act({type:'tz',section:TZ_SEC,assignee:TZ_EXEC,projectId:TZ_PROJ||null,text});tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
+  if(send) send.onclick=async()=>{captureTZ();const tpl=TZ_TEMPLATES[TZ_SEC]||[];const lines=[];tpl.forEach(([id,label])=>{const v=(TZ_FIELDS[id]||'').trim();if(v)lines.push(label+': '+v);});const text=lines.join('\n');if(!text){tg.showAlert&&tg.showAlert('Заполни хотя бы одно поле');return;}await act({type:'tz',section:TZ_SEC,assignee:TZ_EXEC,projectId:TZ_PROJ||null,text});TZ_FIELDS={};render();tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
 
   // ---- таблица ----
   document.querySelectorAll('[data-tproj]').forEach(b=>b.onclick=()=>{TBL_PROJ=+b.dataset.tproj;TBL_PLAN=null;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
