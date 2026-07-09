@@ -37,8 +37,8 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["board", "work", "plan", "video", "tz", "tasks", "report", "subs"],
-  manager: ["board", "work", "tz", "plan", "tasks", "report"],
+  admin: ["board", "tasks", "tz", "plan", "video", "work", "report", "subs"],
+  manager: ["board", "tasks", "tz", "plan", "work", "report"],
   videographer: ["mywork", "tasks"],
   editor: ["mywork", "tasks"],
   designer: ["mywork", "tasks"],
