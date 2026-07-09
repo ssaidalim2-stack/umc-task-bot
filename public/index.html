@@ -220,7 +220,7 @@ function renderBoard(){
 function renderTasks(){
   let h=`<div class="card"><h3>✅ Мои задачи</h3>`;
   if(!DATA.myTasks.length) h+='<div class="muted">Активных задач нет 🎉</div>';
-  h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-done="${t.id}">Выполнил</button></div>`).join('');
+  h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><div style="display:flex;gap:6px"><button class="btn sm" data-done="${t.id}">Выполнил</button><button class="btn sm sec" data-file="${t.id}" title="Сдать файл">📎</button></div></div>`).join('');
   h+='</div>';
   if(DATA.confirmable&&DATA.confirmable.length){
     h+=`<div class="card"><h3>🔔 Требуют моего утверждения</h3>`;
@@ -316,6 +316,7 @@ function bind(){
   document.querySelectorAll('[data-fmt]').forEach(b=>b.onclick=()=>{const[id,f]=b.dataset.fmt.split(':');act({type:'vid_fmt',id:+id,format:f});});
   document.querySelectorAll('[data-gfx]').forEach(b=>b.onclick=()=>act({type:'gfx_done',projectId:+b.dataset.gfx}));
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick=()=>act({type:'task_done',id:+b.dataset.done}));
+  document.querySelectorAll('[data-file]').forEach(b=>b.onclick=async()=>{await act({type:'task_submit_file',id:+b.dataset.file});tg.showAlert&&tg.showAlert('Открой чат с ботом и пришли файл готовой работы 📎');});
   document.querySelectorAll('[data-confirm]').forEach(b=>b.onclick=()=>act({type:'task_confirm',id:+b.dataset.confirm}));
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({type:'task_approve',id:+b.dataset.approve}));
   document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>act({type:'task_reject',id:+b.dataset.reject}));

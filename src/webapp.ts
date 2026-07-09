@@ -261,6 +261,13 @@ export async function doAction(userId: number, action: any) {
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}`); } catch {} }
       break;
     }
+    case "task_submit_file": {
+      const t = await d2.getTaskRow(+action.id);
+      if (!t) break;
+      await db.setSession(userId, { awaitFileTask: t.id } as any);
+      try { await bot.api.sendMessage(userId, `📎 Пришли сюда файл готовой работы по задаче «${t.title}». Как получу — отправлю в группу проекта и передам на утверждение.`); } catch {}
+      break;
+    }
     case "task_confirm": {
       if (role !== "admin" && role !== "manager") break;
       const t = await d2.getTaskRow(+action.id);

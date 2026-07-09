@@ -3,6 +3,7 @@ import * as db from "./db";
 import * as d2 from "./db2";
 import * as views from "./views";
 import { STAGE_OWNERS, STAGE_LABEL, nextStage, APPS } from "./projects";
+import { roleOf } from "./webapp";
 
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
 
@@ -185,6 +186,41 @@ export function registerV2(bot: Bot) {
     const spec = (specialty || "all").toLowerCase();
     await d2.addBinding(ctx.chat.id, projId, spec);
     await ctx.reply(`✅ Группа привязана: ${projName} (раздел: ${spec}). Сюда будут приходить ТЗ и уведомления по этому разделу.`);
+  });
+
+  // ----- приём файла готовой работы -----
+  bot.on(["message:document", "message:video", "message:photo", "message:audio", "message:voice", "message:video_note"], async (ctx) => {
+    if (ctx.chat.type !== "private") return;
+    const s: any = await db.getSession(ctx.from!.id);
+    const taskId = s && s.awaitFileTask;
+    if (!taskId) {
+      await ctx.reply("Чтобы сдать файл: открой приложение → «Мои задачи» → 📎 Файл у нужной задачи, потом пришли файл сюда.");
+      return;
+    }
+    const t = await d2.getTaskRow(taskId);
+    await db.clearSession(ctx.from!.id);
+    if (!t) { await ctx.reply("Задача не найдена."); return; }
+    const member = await db.getMember(ctx.from!.id);
+    const role = roleOf(member, isAdmin(member, ctx.from!.id));
+    const fname = ctx.message.document?.file_name || (ctx.message as any).video?.file_name || "файл";
+
+    // переслать в привязанные группы проекта
+    let forwarded = 0;
+    if (t.project_id) {
+      const spec = ({ videographer: "shoot", editor: "edit", designer: "design" } as any)[role] || "all";
+      for (const b of await d2.bindingsFor(t.project_id, spec)) {
+        try { await ctx.api.copyMessage(b.chat_id, ctx.chat.id, ctx.message.message_id, { caption: `📎 Готовая работа: ${t.title}\nОт: ${member?.name || "исполнитель"}` }); forwarded++; } catch {}
+      }
+    }
+    // сохранить отметку + передать на утверждение
+    const desc = (t.description ? t.description + "\n" : "") + `📎 Файл сдан: ${fname}`;
+    const next = role === "manager" || role === "admin" ? "await_admin" : "await_manager";
+    await d2.setTaskStatus(t.id, next, { description: desc } as any);
+    let recips: number[];
+    if (next === "await_admin") recips = [...new Set([...ENV_ADMINS, ...(await db.listAdmins()).map((a) => a.telegram_id)])];
+    else { const m = await d2.resolveMember("Бобур"); recips = m ? [m.telegram_id] : []; }
+    for (const cid of recips) { if (cid === ctx.from!.id) continue; try { await ctx.api.sendMessage(cid, `🔔 ${member?.name || "Исполнитель"} сдал(а) работу по «${t.title}» (файл в группе). Нужно утверждение в приложении → Задачи.`); } catch {} }
+    await ctx.reply(`✅ Файл принят${forwarded ? " и отправлен в группу проекта" : ""}. Задача передана на утверждение.`);
   });
 }
 
