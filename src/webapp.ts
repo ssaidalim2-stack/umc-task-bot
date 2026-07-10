@@ -62,6 +62,21 @@ function isAdminId(member: db.Member | null, id: number) {
   return Boolean(member?.is_admin) || ENV_ADMINS.includes(id);
 }
 
+// разбор дедлайна: "12.07", "12.07.2026", "12.07 18:30" (время Asia/Tashkent)
+export function parseDeadline(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?(?:\s+(\d{1,2}):(\d{2}))?$/);
+  if (!m) return null;
+  const now = new Date();
+  const d = +m[1], mo = +m[2];
+  let y = m[3] ? +m[3] : now.getUTCFullYear();
+  if (y < 100) y += 2000;
+  const hh = m[4] ? +m[4] : 18, mi = m[5] ? +m[5] : 0;
+  const localMs = Date.UTC(y, mo - 1, d, hh, mi);
+  if (Number.isNaN(localMs)) return null;
+  return new Date(localMs - 5 * 3600 * 1000).toISOString(); // UTC+5
+}
+
 // поля пункта контент-плана храним JSON-ом в content_items.title (без изменения схемы)
 function parseItemData(title: string | null): any {
   try { const d = JSON.parse(title || "{}"); return d && typeof d === "object" ? d : {}; } catch { return title ? { script: title } : {}; }
@@ -257,8 +272,10 @@ export async function doAction(userId: number, action: any) {
       const title = (action.title || "").trim();
       if (!title || !action.assignee) break;
       const ex = await d2.resolveMember(action.assignee);
-      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: action.assignee, project_id: action.projectId ? +action.projectId : null });
-      if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}`); } catch {} }
+      const dl = parseDeadline(action.deadline);
+      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: action.assignee, project_id: action.projectId ? +action.projectId : null, deadline: dl });
+      const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
+      if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}${dlTxt}`); } catch {} }
       break;
     }
     case "task_submit_file": {
@@ -332,6 +349,21 @@ export async function doAction(userId: number, action: any) {
     case "item_delete": {
       if (role !== "admin" && role !== "manager") return { items: [] };
       await d2.deleteContentItem(+action.id);
+      // после удаления — сквозная перенумерация
+      const rest = (await d2.listItemsByPlan(+action.planId));
+      for (let i = 0; i < rest.length; i++) if (rest[i].idx !== i + 1) await d2.updateItem(rest[i].id, { idx: i + 1 });
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "item_move": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const items = await d2.listItemsByPlan(+action.planId);
+      const moving = items.find((x) => x.id === +action.id);
+      if (moving) {
+        const rest = items.filter((x) => x.id !== +action.id);
+        const p = Math.max(1, Math.min(rest.length + 1, +action.toPos || moving.idx));
+        rest.splice(p - 1, 0, moving);
+        for (let i = 0; i < rest.length; i++) if (rest[i].idx !== i + 1) await d2.updateItem(rest[i].id, { idx: i + 1 });
+      }
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "plan_create": {

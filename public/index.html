@@ -158,7 +158,7 @@ function renderTable(){
   let rows;
   if(TBL_ITEMS===null) rows='<div class="muted">Загрузка…</div>';
   else if(!TBL_ITEMS.length) rows='<div class="muted">Пунктов пока нет. Добавь ниже.</div>';
-  else rows=TBL_ITEMS.map(rowHtml).join('');
+  else rows=TBL_ITEMS.map((it,i)=>rowHtml(it,i+1)).join('');
 
   const addBtns = (canEdit() && TBL_PLAN) ? `<div class="row" style="gap:6px;margin-top:12px;flex-wrap:wrap">
     <button class="btn sm" data-tadd="video">＋ Видео</button>
@@ -169,14 +169,15 @@ function renderTable(){
     <div class="card"><h3>📋 ${esc(p.name)}</h3>${rows}${addBtns}</div>`;
 }
 
-function rowHtml(it){
+function rowHtml(it,pos){
   const ti=TYPE_ICON[it.type]||'•';
   const theme=(it.theme||'').trim();
   const body=theme?esc(theme):'<span class="muted">без темы</span>';
   const dl=canEdit()
     ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="дедлайн">`
     : (it.deadline?`<span class="chip">⏰ ${esc(it.deadline)}</span>`:'');
-  return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}<span class="chip">${statusLabel(it.type,it.stage)}</span></div>`;
+  const mv=canEdit()?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
+  return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}<span class="chip">${statusLabel(it.type,it.stage)}</span>${mv}</div>`;
 }
 
 function renderItemDetail(){
@@ -188,6 +189,7 @@ function renderItemDetail(){
   const ro=canEdit()?'':'disabled';
   return `<div class="card">
     <div class="row"><h3>Пункт #${it.idx}</h3><button class="btn sm sec" data-tclose>← назад</button></div>
+    <div class="muted">№ позиция (перенести на другой номер):</div><input id="f_pos" value="${it.idx}" inputmode="numeric" style="max-width:130px" ${ro}>
     <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
     <div class="muted">${scriptLabel}:</div><textarea id="f_script" ${ro}>${esc(it.script)}</textarea>
@@ -249,6 +251,8 @@ function renderTasks(){
     h+=`<div class="card"><h3>➕ Назначить задачу</h3>
       <div class="muted">Исполнитель:</div><div class="pills">${pills}</div>
       <input id="assignTitle" placeholder="Что нужно сделать…">
+      <div class="muted" style="margin-top:6px">Дедлайн (необязательно):</div>
+      <input id="assignDeadline" placeholder="напр. 12.07 или 12.07 18:00" style="max-width:240px">
       <button class="btn full" data-assign-send style="margin-top:8px">📌 Назначить</button></div>`;
   }
   return h;
@@ -332,7 +336,7 @@ function bind(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({type:'task_approve',id:+b.dataset.approve}));
   document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>act({type:'task_reject',id:+b.dataset.reject}));
   document.querySelectorAll('[data-assignto]').forEach(b=>b.onclick=()=>{ASSIGN_I=+b.dataset.assignto;render();});
-  const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=DATA.team||[];const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assignee:m.anchor,title});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
+  const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=DATA.team||[];const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assignee:m.anchor,title,deadline:val('assignDeadline')});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
   document.querySelectorAll('[data-emp]').forEach(b=>b.onclick=()=>{WORK_EMP=+b.dataset.emp;render();});
   document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=SEC_DEFAULT[TZ_SEC]||TZ_EXEC;render();});
   document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=b.dataset.exec;render();});
@@ -350,7 +354,10 @@ function bind(){
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render();});
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const fields={type:it.type,status:it.stage,theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; const res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  document.querySelectorAll('[data-mv]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const[id,toPos]=b.dataset.mv.split(':');act({type:'item_move',id:+id,planId:TBL_PLAN,toPos:+toPos});});
+  // пробел и прочие клавиши не должны перехватываться контейнером Telegram
+  document.querySelectorAll('input,textarea').forEach(el=>{el.addEventListener('keydown',e=>e.stopPropagation());el.addEventListener('keypress',e=>e.stopPropagation());});
   document.querySelectorAll('[data-dl]').forEach(inp=>inp.onchange=async()=>{const res=await api('POST',{type:'item_patch',id:+inp.dataset.dl,planId:TBL_PLAN,patch:{deadline:inp.value}}); if(res&&res.items)TBL_ITEMS=res.items;});
   const tdel=document.querySelector('[data-tdel]'); if(tdel) tdel.onclick=()=>{const del=async()=>{const res=await api('POST',{type:'item_delete',id:TBL_OPEN,planId:TBL_PLAN}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();}; if(tg.showConfirm){tg.showConfirm('Удалить пункт?',(ok)=>{if(ok)del();});}else del();};
 }
