@@ -336,7 +336,16 @@ export async function doAction(userId: number, action: any) {
     }
     case "plan_create": {
       if (role !== "admin" && role !== "manager") break;
-      await d2.createPlan(+action.projectId, (action.period || "Новый период").trim());
+      const planId = await d2.createPlan(+action.projectId, (action.period || "Новый период").trim());
+      if (planId) {
+        const v = Math.max(0, Math.min(200, +action.videos || 0));
+        const g = Math.max(0, Math.min(200, +action.graphics || 0));
+        const specs: { type: string; idx: number }[] = [];
+        let idx = 1;
+        for (let i = 0; i < v; i++) specs.push({ type: "video", idx: idx++ });
+        for (let i = 0; i < g; i++) specs.push({ type: "graphic", idx: idx++ });
+        await d2.addContentItems(planId, +action.projectId, specs);
+      }
       break;
     }
   }

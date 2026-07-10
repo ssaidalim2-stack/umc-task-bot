@@ -36,6 +36,11 @@ export async function addContentItem(input: { plan_id: number; project_id: numbe
   const stage = input.type === "video" ? "idea" : "todo";
   await supabase.from("content_items").insert({ plan_id: input.plan_id, project_id: input.project_id, type: input.type, idx: input.idx, stage, status: "in_progress" });
 }
+export async function addContentItems(planId: number, projectId: number, specs: { type: string; idx: number }[]): Promise<void> {
+  if (!specs.length) return;
+  const rows = specs.map((s) => ({ plan_id: planId, project_id: projectId, type: s.type, idx: s.idx, stage: s.type === "video" ? "idea" : "todo", status: "in_progress" }));
+  await supabase.from("content_items").insert(rows);
+}
 export async function deleteContentItem(id: number): Promise<void> {
   await supabase.from("content_items").delete().eq("id", id);
 }

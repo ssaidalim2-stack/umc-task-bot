@@ -147,7 +147,13 @@ function renderTable(){
   const periodPills=plans.map(pl=>`<div class="pill ${pl.id==TBL_PLAN?'active':''}" data-tplan="${pl.id}">${esc(pl.period)}${pl.is_active?' •':''}</div>`).join('')
     + (canEdit()?`<div class="pill" data-tplan-new>＋ период</div>`:'');
 
-  const newP = (TBL_NEWPERIOD && canEdit()) ? `<div class="card"><div class="muted">Новый период (таблица):</div><input id="np_name" placeholder="напр. Июль–Август 2026"><button class="btn sm full" data-np-create>Создать</button></div>` : '';
+  const newP = (TBL_NEWPERIOD && canEdit()) ? `<div class="card"><div class="muted">Новый период (таблица):</div>
+    <input id="np_name" placeholder="напр. Июль–Август 2026">
+    <div class="row" style="gap:10px;margin-top:6px">
+      <div style="flex:1"><div class="muted">Видео:</div><input id="np_videos" value="10" inputmode="numeric"></div>
+      <div style="flex:1"><div class="muted">Граф-постов:</div><input id="np_graphics" value="3" inputmode="numeric"></div>
+    </div>
+    <button class="btn full" data-np-create style="margin-top:8px">Создать таблицу</button></div>` : '';
 
   let rows;
   if(TBL_ITEMS===null) rows='<div class="muted">Загрузка…</div>';
@@ -338,7 +344,7 @@ function bind(){
   document.querySelectorAll('[data-tproj]').forEach(b=>b.onclick=()=>{TBL_PROJ=+b.dataset.tproj;TBL_PLAN=null;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
   document.querySelectorAll('[data-tplan]').forEach(b=>b.onclick=()=>{TBL_PLAN=+b.dataset.tplan;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
   const pnew=document.querySelector('[data-tplan-new]'); if(pnew) pnew.onclick=()=>{TBL_NEWPERIOD=!TBL_NEWPERIOD;render();};
-  const npc=document.querySelector('[data-np-create]'); if(npc) npc.onclick=async()=>{const period=(val('np_name')||'').trim(); if(!period){tg.showAlert&&tg.showAlert('Введите название периода');return;} const res=await api('POST',{type:'plan_create',projectId:TBL_PROJ,period}); if(res&&res.projects){DATA=res;} TBL_NEWPERIOD=false;TBL_PLAN=null;TBL_LOADED=null; render();};
+  const npc=document.querySelector('[data-np-create]'); if(npc) npc.onclick=async()=>{const period=(val('np_name')||'').trim(); if(!period){tg.showAlert&&tg.showAlert('Введите название периода');return;} const videos=parseInt(val('np_videos'))||0, graphics=parseInt(val('np_graphics'))||0; const res=await api('POST',{type:'plan_create',projectId:TBL_PROJ,period,videos,graphics}); if(res&&res.projects){DATA=res;} TBL_NEWPERIOD=false;TBL_PLAN=null;TBL_LOADED=null; render(); tg.showAlert&&tg.showAlert('Период создан ✅');};
   document.querySelectorAll('[data-topen]').forEach(b=>b.onclick=()=>{TBL_OPEN=+b.dataset.topen;render();});
   const tclose=document.querySelector('[data-tclose]'); if(tclose) tclose.onclick=()=>{TBL_OPEN=null;render();};
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render();});
