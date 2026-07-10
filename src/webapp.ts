@@ -68,7 +68,7 @@ function parseItemData(title: string | null): any {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, theme: d.theme || "", script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
 }
 
 // ---------- сбор данных ----------
@@ -309,10 +309,23 @@ export async function doAction(userId: number, action: any) {
     case "item_update": {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const f = action.fields || {};
-      const data = { script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const data = { theme: f.theme || "", script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
+      await d2.updateItem(+action.id, patch);
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "item_patch": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { items: [] };
+      const d = parseItemData((it as any).title);
+      const p = action.patch || {};
+      for (const k of ["theme", "script", "reference", "props", "shoot_date", "deadline"]) if (k in p) (d as any)[k] = p[k];
+      const patch: any = { title: JSON.stringify(d) };
+      if (p.type) patch.type = p.type;
+      if (p.status) { patch.stage = p.status; patch.status = p.status === "published" || p.status === "done" ? "done" : "in_progress"; }
       await d2.updateItem(+action.id, patch);
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }

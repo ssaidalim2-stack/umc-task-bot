@@ -59,6 +59,7 @@
   .bhead{font-weight:700;font-size:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
   .bcount{font-size:12px;color:var(--hint);background:rgba(127,127,127,.2);border-radius:10px;padding:1px 8px}
   .bcard{background:var(--bg);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:13px}
+  .rowdl{width:78px;padding:5px 7px;border-radius:8px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);font-size:12px;flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -94,7 +95,7 @@ function STATUS_OPTS(type){ return type==='video'
 function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
 function canEdit(){ return DATA.user.role==='admin'||DATA.user.role==='manager'; }
 function val(id){ const e=document.getElementById(id); return e?e.value:''; }
-function captureFields(it){ if(document.getElementById('f_script')){ it.script=val('f_script'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } }
+function captureFields(it){ if(document.getElementById('f_script')){ it.theme=val('f_theme'); it.script=val('f_script'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } }
 
 const TABMETA={
   board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
@@ -164,9 +165,12 @@ function renderTable(){
 
 function rowHtml(it){
   const ti=TYPE_ICON[it.type]||'•';
-  const snip=(it.script||'').trim().slice(0,40);
-  const body=snip?esc(snip):'<span class="muted">без описания</span>';
-  return `<div class="vid" data-topen="${it.id}"><div style="min-width:0"><b>#${it.idx}</b> ${ti} <span class="muted">${body}</span></div><span class="chip">${statusLabel(it.type,it.stage)}</span></div>`;
+  const theme=(it.theme||'').trim();
+  const body=theme?esc(theme):'<span class="muted">без темы</span>';
+  const dl=canEdit()
+    ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="дедлайн">`
+    : (it.deadline?`<span class="chip">⏰ ${esc(it.deadline)}</span>`:'');
+  return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}<span class="chip">${statusLabel(it.type,it.stage)}</span></div>`;
 }
 
 function renderItemDetail(){
@@ -178,6 +182,7 @@ function renderItemDetail(){
   const ro=canEdit()?'':'disabled';
   return `<div class="card">
     <div class="row"><h3>Пункт #${it.idx}</h3><button class="btn sm sec" data-tclose>← назад</button></div>
+    <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
     <div class="muted">${scriptLabel}:</div><textarea id="f_script" ${ro}>${esc(it.script)}</textarea>
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
@@ -339,7 +344,8 @@ function bind(){
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render();});
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const fields={type:it.type,status:it.stage,script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; const res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const fields={type:it.type,status:it.stage,theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; const res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  document.querySelectorAll('[data-dl]').forEach(inp=>inp.onchange=async()=>{const res=await api('POST',{type:'item_patch',id:+inp.dataset.dl,planId:TBL_PLAN,patch:{deadline:inp.value}}); if(res&&res.items)TBL_ITEMS=res.items;});
   const tdel=document.querySelector('[data-tdel]'); if(tdel) tdel.onclick=()=>{const del=async()=>{const res=await api('POST',{type:'item_delete',id:TBL_OPEN,planId:TBL_PLAN}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();}; if(tg.showConfirm){tg.showConfirm('Удалить пункт?',(ok)=>{if(ok)del();});}else del();};
 }
 
