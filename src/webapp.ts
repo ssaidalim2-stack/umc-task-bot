@@ -37,12 +37,12 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["board", "tasks", "tz", "plan", "video", "work", "report", "subs"],
-  manager: ["board", "tasks", "tz", "plan", "work", "report"],
-  videographer: ["mywork", "tasks"],
-  editor: ["mywork", "tasks"],
-  designer: ["mywork", "tasks"],
-  member: ["tasks"],
+  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "report", "subs"],
+  manager: ["home", "board", "tasks", "tz", "plan", "work", "report"],
+  videographer: ["home", "mywork", "tasks"],
+  editor: ["home", "mywork", "tasks"],
+  designer: ["home", "mywork", "tasks"],
+  member: ["home", "tasks"],
 };
 
 const SECTION = {
@@ -83,7 +83,7 @@ function parseItemData(title: string | null): any {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, theme: d.theme || "", script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
 }
 
 // ---------- сбор данных ----------
@@ -155,6 +155,43 @@ export async function getData(userId: number) {
     };
   }
 
+  // задачи команды «на выполнении» (для дашборда админа/менеджера)
+  const teamTasks = canConfirm
+    ? openTasks.filter((t) => t.status === "new" || t.status === "in_progress").map((t) => ({ title: t.title, who: nameOf(t) }))
+    : [];
+
+  // статистика прогресса по активному периоду
+  const LANGS = ["ru", "uz", "en"];
+  const statsProjects = projects.map((p) => {
+    const its = itemsByProject.get(p.id) || [];
+    const videos = its.filter((x) => x.type === "video");
+    const graphics = its.filter((x) => x.type !== "video");
+    let scripts = 0;
+    const langs: any = { ru: 0, uz: 0, en: 0, none: 0 };
+    for (const v of videos) {
+      const d = parseItemData(v.title);
+      if ((d.script || "").trim()) scripts++;
+      const l = (d.lang || "").trim();
+      if (LANGS.includes(l)) langs[l]++; else langs.none++;
+    }
+    const inAny = (sts: string[]) => videos.filter((v) => sts.includes(v.stage)).length;
+    return {
+      name: p.name, videoTotal: videos.length, scripts,
+      shot: inAny(["shoot", "edit", "published"]),
+      edited: inAny(["edit", "published"]),
+      published: inAny(["published"]),
+      graphicDone: graphics.filter((g) => g.stage === "done").length, graphicTotal: graphics.length,
+      langs,
+    };
+  });
+  const statsTotals = statsProjects.reduce((a: any, s: any) => ({
+    videoTotal: a.videoTotal + s.videoTotal, scripts: a.scripts + s.scripts, shot: a.shot + s.shot,
+    edited: a.edited + s.edited, published: a.published + s.published,
+    graphicDone: a.graphicDone + s.graphicDone, graphicTotal: a.graphicTotal + s.graphicTotal,
+    langs: { ru: a.langs.ru + s.langs.ru, uz: a.langs.uz + s.langs.uz, en: a.langs.en + s.langs.en, none: a.langs.none + s.langs.none },
+  }), { videoTotal: 0, scripts: 0, shot: 0, edited: 0, published: 0, graphicDone: 0, graphicTotal: 0, langs: { ru: 0, uz: 0, en: 0, none: 0 } });
+  const stats = { projects: statsProjects, totals: statsTotals };
+
   let pub = 0, vt = 0, gd = 0, gt = 0;
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
 
@@ -186,7 +223,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, myWork, board,
+    confirmable, team, myWork, board, teamTasks, stats,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -326,7 +363,7 @@ export async function doAction(userId: number, action: any) {
     case "item_update": {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const f = action.fields || {};
-      const data = { theme: f.theme || "", script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const data = { lang: f.lang || "", theme: f.theme || "", script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }

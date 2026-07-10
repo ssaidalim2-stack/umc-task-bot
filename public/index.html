@@ -93,12 +93,14 @@ function STATUS_OPTS(type){ return type==='video'
   ? [["idea","🕒 В плане"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]]
   : [["todo","🕒 В работе"],["done","✅ Готово"]]; }
 function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
+const LANG_OPTS=[["ru","🇷🇺 Рус"],["uz","🇺🇿 Узб"],["en","🇬🇧 Англ"]];
+const LANG_SHORT={ru:"РУС",uz:"УЗБ",en:"ENG"};
 function canEdit(){ return DATA.user.role==='admin'||DATA.user.role==='manager'; }
 function val(id){ const e=document.getElementById(id); return e?e.value:''; }
 function captureFields(it){ if(document.getElementById('f_script')){ it.theme=val('f_theme'); it.script=val('f_script'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } }
 
 const TABMETA={
-  board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
+  home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
   subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"},
 };
@@ -125,7 +127,7 @@ function buildTabs(){
 function render(){
   document.getElementById('period').textContent=(DATA.user.role?roleLabel(DATA.user.role)+' · ':'')+(DATA.period||'');
   const v=document.getElementById('view');
-  const map={board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
 }
@@ -177,7 +179,8 @@ function rowHtml(it,pos){
     ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="дедлайн">`
     : (it.deadline?`<span class="chip">⏰ ${esc(it.deadline)}</span>`:'');
   const mv=canEdit()?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
-  return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}<span class="chip">${statusLabel(it.type,it.stage)}</span>${mv}</div>`;
+  const lg=it.lang?`<span class="chip">${LANG_SHORT[it.lang]||it.lang}</span>`:'';
+  return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage)}</span>${mv}</div>`;
 }
 
 function renderItemDetail(){
@@ -192,6 +195,7 @@ function renderItemDetail(){
     <div class="muted">№ позиция (перенести на другой номер):</div><input id="f_pos" value="${it.idx}" inputmode="numeric" style="max-width:130px" ${ro}>
     <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
+    <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${it.lang==k?'active':''}" data-tlang="${k}">${l}</div>`).join('')}</div>
     <div class="muted">${scriptLabel}:</div><textarea id="f_script" ${ro}>${esc(it.script)}</textarea>
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
     <div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
@@ -216,6 +220,43 @@ function renderVideo(){
     return `<div class="card"><div class="row"><b>Видео #${vd.idx}</b><span class="chip">${lbl[vd.stage]}</span></div><div class="stageline">${segs}</div><div class="row" style="margin-top:10px;gap:6px;justify-content:flex-end">${a}</div></div>`;
   }).join('');
   return `<div class="pills">${pills}</div><div class="card"><div class="row"><h3>${esc(p.name)}</h3>${p.sheet_url?`<a href="${p.sheet_url}" target="_blank">📊 Таблица</a>`:''}</div><div class="muted">🖼 Графика ${p.graphicDone}/${p.graphicTotal}</div><button class="btn sm full" data-gfx="${p.id}">🖼 +1 графика готова</button></div>${items}`;
+}
+
+function prog(label,done,total){ return `<div class="muted">${label}: <b>${done}/${total}</b></div>${bar(done,total)}`; }
+
+function renderHome(){
+  const u=DATA.user, st=DATA.stats;
+  let h=`<div class="card"><h3>👋 Привет, ${esc(u.name||'')}</h3><div class="muted">${roleLabel(u.role)}${DATA.period?' · '+esc(DATA.period):''}</div></div>`;
+
+  h+=`<div class="card"><div class="row"><h3>✅ Мои задачи</h3><span class="chip">${DATA.myTasks.length}</span></div>`;
+  h+= DATA.myTasks.length ? DATA.myTasks.slice(0,6).map(t=>`<div class="vid"><span>${esc(t.title)}</span></div>`).join('') : '<div class="muted">Активных задач нет 🎉</div>';
+  h+='</div>';
+
+  if(canEdit() && DATA.teamTasks){
+    h+=`<div class="card"><div class="row"><h3>👥 Задачи команды на выполнении</h3><span class="chip">${DATA.teamTasks.length}</span></div>`;
+    h+= DATA.teamTasks.length ? DATA.teamTasks.slice(0,8).map(t=>`<div class="vid"><span style="min-width:0">${esc(t.title)}</span><span class="muted">${esc(t.who)}</span></div>`).join('') : '<div class="muted">Пока никто ничего не выполняет</div>';
+    h+='</div>';
+  }
+
+  if(st){
+    const T=st.totals;
+    h+=`<div class="card"><h3>📈 Прогресс по контент-плану</h3>
+      ${prog('📝 Сценарии заполнены',T.scripts,T.videoTotal)}
+      ${prog('🎥 Снято',T.shot,T.videoTotal)}
+      ${prog('✂️ Смонтировано',T.edited,T.videoTotal)}
+      ${prog('✅ Опубликовано',T.published,T.videoTotal)}
+      ${prog('🖼 Графика готова',T.graphicDone,T.graphicTotal)}
+    </div>`;
+    h+=`<div class="card"><h3>🌐 Языки видео</h3>
+      <div class="muted">🇷🇺 Рус: <b>${T.langs.ru}</b> · 🇺🇿 Узб: <b>${T.langs.uz}</b> · 🇬🇧 Англ: <b>${T.langs.en}</b> · не указан: ${T.langs.none}</div></div>`;
+    h+=`<div class="card" style="overflow-x:auto"><h3>По проектам</h3>
+      <table class="ctab">
+        <tr><th>Проект</th><th>📝</th><th>🎥</th><th>✂️</th><th>✅</th><th>🖼</th><th>РУС</th><th>УЗБ</th><th>ENG</th></tr>
+        ${st.projects.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.scripts}/${p.videoTotal}</td><td>${p.shot}</td><td>${p.edited}</td><td>${p.published}</td><td>${p.graphicDone}/${p.graphicTotal}</td><td>${p.langs.ru}</td><td>${p.langs.uz}</td><td>${p.langs.en}</td></tr>`).join('')}
+      </table>
+      <div class="muted" style="margin-top:6px">📝сценарии · 🎥снято · ✂️смонтировано · ✅опубликовано · 🖼графика</div></div>`;
+  }
+  return h;
 }
 
 function renderBoard(){
@@ -353,8 +394,9 @@ function bind(){
   const tclose=document.querySelector('[data-tclose]'); if(tclose) tclose.onclick=()=>{TBL_OPEN=null;render();};
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render();});
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
+  document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
   document.querySelectorAll('[data-mv]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const[id,toPos]=b.dataset.mv.split(':');act({type:'item_move',id:+id,planId:TBL_PLAN,toPos:+toPos});});
   // пробел и прочие клавиши не должны перехватываться контейнером Telegram
   document.querySelectorAll('input,textarea').forEach(el=>{el.addEventListener('keydown',e=>e.stopPropagation());el.addEventListener('keypress',e=>e.stopPropagation());});
