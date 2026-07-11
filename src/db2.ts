@@ -108,8 +108,37 @@ export interface TaskRow {
   confirmed_by: number | null; item_id: number | null;
 }
 export async function listOpenTasks(): Promise<TaskRow[]> {
-  const { data } = await supabase.from("tasks").select("*").not("status", "in", "(done,cancelled)").order("id");
+  const { data } = await supabase.from("tasks").select("*").not("status", "in", "(done,cancelled)").neq("kind", "daily").order("id");
   return (data as TaskRow[]) ?? [];
+}
+
+// ---------- ежедневник ----------
+export async function listDailyTemplates(): Promise<TaskRow[]> {
+  const { data } = await supabase.from("tasks").select("*").eq("kind", "daily").order("id");
+  return (data as TaskRow[]) ?? [];
+}
+export async function dailyDoneToday(userId: number, day: string): Promise<number[]> {
+  const { data } = await supabase.from("task_log").select("task_id").eq("actor_id", userId).eq("action", `daily:${day}`);
+  return (data ?? []).map((r: any) => r.task_id);
+}
+export async function toggleDaily(userId: number, tid: number, day: string): Promise<boolean> {
+  const { data } = await supabase.from("task_log").select("id").eq("task_id", tid).eq("actor_id", userId).eq("action", `daily:${day}`).maybeSingle();
+  if (data) { await supabase.from("task_log").delete().eq("id", (data as any).id); return false; }
+  await supabase.from("task_log").insert({ task_id: tid, actor_id: userId, action: `daily:${day}` });
+  return true;
+}
+export async function dailyAllTime(userId: number): Promise<number> {
+  const { count } = await supabase.from("task_log").select("id", { count: "exact", head: true }).eq("actor_id", userId).ilike("action", "daily:%");
+  return count ?? 0;
+}
+export async function createDailyTemplate(title: string, who: string): Promise<void> {
+  await supabase.from("tasks").insert({ title, assignee_name: who || null, creator_id: 0, kind: "daily", status: "template", needs_confirmation: false });
+}
+export async function deleteTask(id: number): Promise<void> {
+  await supabase.from("tasks").delete().eq("id", id);
+}
+export async function updateTaskTitle(id: number, title: string): Promise<void> {
+  await supabase.from("tasks").update({ title }).eq("id", id);
 }
 export async function recentDoneTasks(limit = 15): Promise<TaskRow[]> {
   const { data } = await supabase.from("tasks").select("*").eq("status", "done").order("updated_at", { ascending: false }).limit(limit);

@@ -232,6 +232,16 @@ function renderHome(){
   h+= DATA.myTasks.length ? DATA.myTasks.slice(0,6).map(t=>`<div class="vid"><span>${esc(t.title)}</span></div>`).join('') : '<div class="muted">Активных задач нет 🎉</div>';
   h+='</div>';
 
+  if(DATA.daily){ const d=DATA.daily;
+    h+=`<div class="card"><div class="row"><h3>📅 Ежедневник</h3><span class="chip">${d.todayDone}/${d.total}</span></div>`;
+    if(!d.items.length) h+='<div class="muted">Пока нет ежедневных задач.</div>';
+    h+=d.items.map(it=>`<div class="vid"><span data-daily="${it.id}" style="cursor:pointer;flex:1;min-width:0">${it.done?'✅':'⬜'} ${esc(it.title)}${(it.who&&it.who!=='все')?` <span class="muted">(${esc(it.who)})</span>`:''}</span>${d.canEdit?`<button class="btn sm sec" data-daily-del="${it.id}">🗑</button>`:''}</div>`).join('');
+    if(d.canEdit){
+      h+=`<div style="margin-top:8px"><input id="dailyNew" placeholder="Новая ежедневная задача…"><div class="row" style="gap:8px;margin-top:6px"><input id="dailyWho" placeholder="кому (пусто = всем)" style="flex:1"><button class="btn sm" data-daily-add>＋ Добавить</button></div></div>`;
+    }
+    h+=`<div class="muted" style="margin-top:8px">Выполнено всего: <b>${d.allTime}</b></div></div>`;
+  }
+
   if(canEdit() && DATA.teamTasks){
     h+=`<div class="card"><div class="row"><h3>👥 Задачи команды на выполнении</h3><span class="chip">${DATA.teamTasks.length}</span></div>`;
     h+= DATA.teamTasks.length ? DATA.teamTasks.slice(0,8).map(t=>`<div class="vid"><span style="min-width:0">${esc(t.title)}</span><span class="muted">${esc(t.who)}</span></div>`).join('') : '<div class="muted">Пока никто ничего не выполняет</div>';
@@ -398,6 +408,9 @@ function bind(){
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
   const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
   document.querySelectorAll('[data-mv]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const[id,toPos]=b.dataset.mv.split(':');act({type:'item_move',id:+id,planId:TBL_PLAN,toPos:+toPos});});
+  document.querySelectorAll('[data-daily]').forEach(b=>b.onclick=()=>act({type:'daily_toggle',id:+b.dataset.daily}));
+  document.querySelectorAll('[data-daily-del]').forEach(b=>b.onclick=()=>act({type:'daily_delete',id:+b.dataset.dailyDel}));
+  const dadd=document.querySelector('[data-daily-add]'); if(dadd) dadd.onclick=async()=>{const title=(val('dailyNew')||'').trim(); if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;} await act({type:'daily_add',title,who:val('dailyWho')});};
   // пробел и прочие клавиши не должны перехватываться контейнером Telegram
   document.querySelectorAll('input,textarea').forEach(el=>{el.addEventListener('keydown',e=>e.stopPropagation());el.addEventListener('keypress',e=>e.stopPropagation());});
   document.querySelectorAll('[data-dl]').forEach(inp=>inp.onchange=async()=>{const res=await api('POST',{type:'item_patch',id:+inp.dataset.dl,planId:TBL_PLAN,patch:{deadline:inp.value}}); if(res&&res.items)TBL_ITEMS=res.items;});

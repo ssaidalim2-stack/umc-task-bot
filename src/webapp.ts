@@ -89,8 +89,10 @@ function serializeItem(v: any) {
 // ---------- сбор данных ----------
 export async function getData(userId: number) {
   // один «залп» параллельных запросов вместо десятков последовательных
-  const [member0, projects, plans, items, members, openTasks, subs, doneTasks] = await Promise.all([
+  const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10); // Asia/Tashkent
+  const [member0, projects, plans, items, members, openTasks, subs, doneTasks, dailyTpl, dailyDone, dailyTotal] = await Promise.all([
     db.getMember(userId), d2.getProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(), d2.recentDoneTasks(15),
+    d2.listDailyTemplates(), d2.dailyDoneToday(userId, today), d2.dailyAllTime(userId),
   ]);
   let member = member0;
   if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
@@ -192,6 +194,15 @@ export async function getData(userId: number) {
   }), { videoTotal: 0, scripts: 0, shot: 0, edited: 0, published: 0, graphicDone: 0, graphicTotal: 0, langs: { ru: 0, uz: 0, en: 0, none: 0 } });
   const stats = { projects: statsProjects, totals: statsTotals };
 
+  // ежедневник: задачи для этого пользователя + отметки за сегодня
+  const doneSet = new Set(dailyDone);
+  const myDaily = dailyTpl.filter((t) => {
+    const who = (t.assignee_name || "").trim().toLowerCase();
+    if (!who || who === "все" || who === "all") return true;
+    return d2.resolveMemberSync(members, t.assignee_name!)?.telegram_id === userId;
+  }).map((t) => ({ id: t.id, title: t.title, who: t.assignee_name || "все", done: doneSet.has(t.id) }));
+  const daily = { items: myDaily, todayDone: myDaily.filter((x) => x.done).length, total: myDaily.length, allTime: dailyTotal, canEdit: isAdmin };
+
   let pub = 0, vt = 0, gd = 0, gt = 0;
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
 
@@ -223,7 +234,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, myWork, board, teamTasks, stats,
+    confirmable, team, myWork, board, teamTasks, stats, daily,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -313,6 +324,28 @@ export async function doAction(userId: number, action: any) {
       await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: action.assignee, project_id: action.projectId ? +action.projectId : null, deadline: dl });
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}${dlTxt}`); } catch {} }
+      break;
+    }
+    case "daily_toggle": {
+      const day = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+      await d2.toggleDaily(userId, +action.id, day);
+      break;
+    }
+    case "daily_add": {
+      if (role !== "admin") break;
+      const title = (action.title || "").trim();
+      if (title) await d2.createDailyTemplate(title, (action.who || "").trim());
+      break;
+    }
+    case "daily_delete": {
+      if (role !== "admin") break;
+      await d2.deleteTask(+action.id);
+      break;
+    }
+    case "daily_edit": {
+      if (role !== "admin") break;
+      const title = (action.title || "").trim();
+      if (title) await d2.updateTaskTitle(+action.id, title);
       break;
     }
     case "task_submit_file": {
