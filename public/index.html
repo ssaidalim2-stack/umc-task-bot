@@ -32,6 +32,17 @@
   .btn.sec{background:rgba(127,127,127,.18);color:var(--text)}
   .btn.full{width:100%;margin-top:8px}
   .btn.sm{padding:6px 10px;font-size:13px}
+  .btn.xs{padding:5px 9px;font-size:12px;border-radius:8px}
+  .framewrap{margin:2px 0 6px}
+  .frame{border:1px solid rgba(127,127,127,.28);border-radius:12px;padding:9px;margin-bottom:8px;background:var(--bg)}
+  .fhead{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+  .fhead b{font-size:13px}
+  .fsp{flex:1}
+  .frow{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px}
+  .rsel{flex:0 0 auto;width:auto;min-width:64px;border-radius:8px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);padding:7px 6px;font-size:13px;font-family:inherit}
+  .rta{flex:1;min-height:44px;font-size:14px;padding:8px}
+  .frowbtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+  .xbtn{appearance:none;border:1px solid rgba(127,127,127,.3);background:rgba(127,127,127,.12);color:var(--text);border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;line-height:1}
   .vid{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(127,127,127,.15);gap:8px}
   .vid:last-child{border-bottom:0}
   .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;overflow-x:auto;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
@@ -95,9 +106,17 @@ function STATUS_OPTS(type){ return type==='video'
 function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
 const LANG_OPTS=[["ru","🇷🇺 Рус"],["uz","🇺🇿 Узб"],["en","🇬🇧 Англ"]];
 const LANG_SHORT={ru:"РУС",uz:"УЗБ",en:"ENG"};
+// роли реплик в кадре: Д — действие, Т — текст/реплика (+ пользовательские)
+const ROLE_DEFAULT=[["Д","Д — действие"],["Т","Т — текст/реплика"]];
+const ROLE_HINT={"Д":"что делает в кадре (движение, ракурс)","Т":"что говорит / текст на экране"};
+function frameLabel(fr,n){ return fr.kind==='hook'?'🎬 Visual hook':fr.kind==='cta'?'📣 CTA — призыв':('🎞 Кадр '+n); }
+// собрать все роли, встречающиеся в сценарии (для предложения при «добавить роль»)
+function scenarioRoles(it){ const s=new Set(ROLE_DEFAULT.map(r=>r[0])); for(const fr of (it.frames||[])) for(const r of (fr.rows||[])) if(r.r) s.add(r.r); return [...s]; }
+function renumberFrames(it){ let n=0; for(const fr of (it.frames||[])) if(fr.kind==='frame') fr._n=(++n); }
 function canEdit(){ return DATA.user.role==='admin'||DATA.user.role==='manager'; }
 function val(id){ const e=document.getElementById(id); return e?e.value:''; }
-function captureFields(it){ if(document.getElementById('f_script')){ it.theme=val('f_theme'); it.script=val('f_script'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } }
+function captureFrames(it){ if(!it.frames) return; it.frames.forEach((fr,fi)=>(fr.rows||[]).forEach((r,ri)=>{const e=document.getElementById('fr_'+fi+'_'+ri); if(e) r.t=e.value;})); }
+function captureFields(it){ if(document.getElementById('f_theme')){ it.theme=val('f_theme'); it.reference=val('f_reference'); it.props=val('f_props'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } if(document.getElementById('f_script')) it.script=val('f_script'); captureFrames(it); }
 
 const TABMETA={
   home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
@@ -183,6 +202,36 @@ function rowHtml(it,pos){
   return `<div class="vid"><div data-topen="${it.id}" style="min-width:0;flex:1;cursor:pointer"><b>#${it.idx}</b> ${ti} ${body}</div>${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage)}</span>${mv}</div>`;
 }
 
+function renderFrames(it){
+  const ro=canEdit();
+  if(!it.frames) it.frames=[];
+  renumberFrames(it);
+  const roles=scenarioRoles(it);
+  const frames=it.frames.map((fr,fi)=>{
+    const rows=(fr.rows||[]).map((r,ri)=>{
+      const opts=roles.map(k=>`<option value="${k}" ${r.r==k?'selected':''}>${esc(k)}</option>`).join('');
+      const hint=ROLE_HINT[r.r]||'реплика / действие';
+      return `<div class="frow">
+        <select class="rsel" data-frole="${fi}:${ri}" ${ro?'':'disabled'}>${opts}</select>
+        <textarea id="fr_${fi}_${ri}" class="rta" placeholder="${esc(hint)}" ${ro?'':'disabled'}>${esc(r.t||'')}</textarea>
+        ${ro?`<button class="xbtn" data-frowdel="${fi}:${ri}" title="удалить строку">✕</button>`:''}
+      </div>`;
+    }).join('');
+    return `<div class="frame">
+      <div class="fhead"><b>${frameLabel(fr,fr._n)}</b><span class="fsp"></span>
+        ${ro?`<button class="xbtn" data-fup="${fi}" title="вверх">▲</button><button class="xbtn" data-fdn="${fi}" title="вниз">▼</button><button class="xbtn" data-fins="${fi}" title="вставить кадр после">＋кадр</button><button class="xbtn" data-fdel="${fi}" title="удалить кадр">🗑</button>`:''}
+      </div>
+      ${rows||'<div class="muted" style="font-size:12px">пусто</div>'}
+      ${ro?`<div class="frowbtns"><button class="btn xs sec" data-fadd="${fi}:Д">＋ действие</button><button class="btn xs sec" data-fadd="${fi}:Т">＋ текст</button><button class="btn xs sec" data-frole2="${fi}">＋ роль</button></div>`:''}
+    </div>`;
+  }).join('');
+  return `<div class="framewrap">${frames||'<div class="muted" style="font-size:12px">Сценарий по кадрам пуст</div>'}
+    ${ro?`<div class="frowbtns" style="margin-top:8px">
+      <button class="btn xs" data-fnew="hook">＋ Visual hook</button>
+      <button class="btn xs" data-fnew="frame">＋ Кадр</button>
+      <button class="btn xs" data-fnew="cta">＋ CTA</button>
+    </div>`:''}</div>`;
+}
 function renderItemDetail(){
   const it=(TBL_ITEMS||[]).find(x=>x.id==TBL_OPEN);
   if(!it){ TBL_OPEN=null; return renderTable(); }
@@ -196,7 +245,8 @@ function renderItemDetail(){
     <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
     <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${it.lang==k?'active':''}" data-tlang="${k}">${l}</div>`).join('')}</div>
-    <div class="muted">${scriptLabel}:</div><textarea id="f_script" ${ro}>${esc(it.script)}</textarea>
+    <div class="muted">${scriptLabel}:</div>
+    ${it.type==='video'?renderFrames(it):`<textarea id="f_script" ${ro}>${esc(it.script)}</textarea>`}
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
     <div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
     <div class="row" style="gap:10px"><div style="flex:1"><div class="muted">Дата съёмки:</div><input id="f_shoot" value="${esc(it.shoot_date)}" placeholder="ДД.ММ" ${ro}></div>
@@ -406,7 +456,19 @@ function bind(){
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:val('f_script'),reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:val('f_script'),frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  // ---- редактор сценария по кадрам ----
+  const _ci=()=>TBL_ITEMS.find(x=>x.id==TBL_OPEN);
+  const fmut=(fn)=>{const it=_ci(); if(!it)return; captureFields(it); if(!it.frames)it.frames=[]; fn(it); render();};
+  document.querySelectorAll('[data-fnew]').forEach(b=>b.onclick=()=>fmut(it=>{const k=b.dataset.fnew,fr={kind:k,rows:[]}; k==='hook'?it.frames.unshift(fr):it.frames.push(fr);}));
+  document.querySelectorAll('[data-fins]').forEach(b=>b.onclick=()=>fmut(it=>it.frames.splice(+b.dataset.fins+1,0,{kind:'frame',rows:[]})));
+  document.querySelectorAll('[data-fup]').forEach(b=>b.onclick=()=>fmut(it=>{const i=+b.dataset.fup; if(i>0){const[f]=it.frames.splice(i,1);it.frames.splice(i-1,0,f);}}));
+  document.querySelectorAll('[data-fdn]').forEach(b=>b.onclick=()=>fmut(it=>{const i=+b.dataset.fdn; if(i<it.frames.length-1){const[f]=it.frames.splice(i,1);it.frames.splice(i+1,0,f);}}));
+  document.querySelectorAll('[data-fdel]').forEach(b=>b.onclick=()=>fmut(it=>it.frames.splice(+b.dataset.fdel,1)));
+  document.querySelectorAll('[data-fadd]').forEach(b=>b.onclick=()=>fmut(it=>{const[fi,role]=b.dataset.fadd.split(':');it.frames[+fi].rows.push({r:role,t:''});}));
+  document.querySelectorAll('[data-frowdel]').forEach(b=>b.onclick=()=>fmut(it=>{const[fi,ri]=b.dataset.frowdel.split(':');it.frames[+fi].rows.splice(+ri,1);}));
+  document.querySelectorAll('[data-frole]').forEach(s=>s.onchange=()=>fmut(it=>{const[fi,ri]=s.dataset.frole.split(':');it.frames[+fi].rows[+ri].r=s.value;}));
+  document.querySelectorAll('[data-frole2]').forEach(b=>b.onclick=()=>{const name=(prompt('Название роли (напр. Голос, Локация, Актёр):')||'').trim(); if(name)fmut(it=>it.frames[+b.dataset.frole2].rows.push({r:name,t:''}));});
   document.querySelectorAll('[data-mv]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const[id,toPos]=b.dataset.mv.split(':');act({type:'item_move',id:+id,planId:TBL_PLAN,toPos:+toPos});});
   document.querySelectorAll('[data-daily]').forEach(b=>b.onclick=()=>act({type:'daily_toggle',id:+b.dataset.daily}));
   document.querySelectorAll('[data-daily-del]').forEach(b=>b.onclick=()=>act({type:'daily_delete',id:+b.dataset.dailyDel}));

@@ -81,9 +81,22 @@ export function parseDeadline(s: string | null | undefined): string | null {
 function parseItemData(title: string | null): any {
   try { const d = JSON.parse(title || "{}"); return d && typeof d === "object" ? d : {}; } catch { return title ? { script: title } : {}; }
 }
+// собрать плоский текст сценария из кадров (для обратной совместимости и статистики)
+function framesToText(frames: any[]): string {
+  const out: string[] = [];
+  for (const fr of frames || []) {
+    if (fr && fr.label) out.push(String(fr.label));
+    for (const r of (fr && fr.rows) || []) {
+      const role = r && r.r ? `${r.r}: ` : "";
+      const t = r && r.t ? String(r.t) : "";
+      if (role || t) out.push(role + t);
+    }
+  }
+  return out.join("\n");
+}
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
 }
 
 // ---------- сбор данных ----------
@@ -396,7 +409,9 @@ export async function doAction(userId: number, action: any) {
     case "item_update": {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const f = action.fields || {};
-      const data = { lang: f.lang || "", theme: f.theme || "", script: f.script || "", reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const frames = Array.isArray(f.frames) ? f.frames : [];
+      const scriptFromFrames = frames.length ? framesToText(frames) : "";
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptFromFrames || f.script || "", frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
