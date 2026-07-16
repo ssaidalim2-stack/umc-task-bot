@@ -38,8 +38,8 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "report", "subs"],
-  manager: ["home", "board", "tasks", "tz", "plan", "work", "report"],
+  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs"],
+  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
   designer: ["home", "mywork", "tasks"],
@@ -381,6 +381,55 @@ export async function doAction(userId: number, action: any) {
       if (role !== "admin") return { error: "нет доступа" };
       await meta.setMetaBinding(String(action.projectKey), action.field === "ad" ? "ad" : "ig", String(action.value || "").trim());
       return { map: await meta.getMetaMap() };
+    }
+    case "analytics_ads": {
+      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      const map = await meta.getMetaMap();
+      const b = map[String(action.projectKey)] || {};
+      if (!b.ad) return { error: "К проекту не привязан рекламный кабинет" };
+      try {
+        const campaigns = await meta.campaignStats(b.ad, String(action.since), String(action.until));
+        const tot = campaigns.reduce((a, c) => ({ spend: a.spend + c.spend, results: a.results + c.results, clicks: a.clicks + c.clicks, impressions: a.impressions + c.impressions }), { spend: 0, results: 0, clicks: 0, impressions: 0 });
+        return { campaigns, totals: tot, currency: campaigns[0]?.currency || "USD" };
+      } catch (e: any) { return { error: String(e.message || e) }; }
+    }
+    case "analytics_media": {
+      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      const map = await meta.getMetaMap();
+      const b = map[String(action.projectKey)] || {};
+      if (!b.ig) return { error: "К проекту не привязан Instagram-аккаунт" };
+      try {
+        const [account, media] = await Promise.all([
+          meta.igAccountStats(b.ig, String(action.since), String(action.until)),
+          meta.igMediaStats(b.ig, String(action.since), String(action.until)),
+        ]);
+        return { account, media };
+      } catch (e: any) { return { error: String(e.message || e) }; }
+    }
+    case "analytics_compare": {
+      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      const map = await meta.getMetaMap();
+      const projects = await d2.getProjects();
+      const rows: any[] = [];
+      await Promise.all(projects.map(async (p) => {
+        const b = map[p.key] || {};
+        if (!b.ig && !b.ad) return;
+        const row: any = { key: p.key, name: p.name, spend: 0, results: 0, reach: 0, views: 0, followerGain: 0, interactions: 0, currency: "USD" };
+        try {
+          if (b.ad) {
+            const cs = await meta.campaignStats(b.ad, String(action.since), String(action.until));
+            row.spend = cs.reduce((a, c) => a + c.spend, 0);
+            row.results = cs.reduce((a, c) => a + c.results, 0);
+            row.currency = cs[0]?.currency || "USD";
+          }
+          if (b.ig) {
+            const acc = await meta.igAccountStats(b.ig, String(action.since), String(action.until));
+            row.reach = acc.reach; row.views = acc.views; row.followerGain = acc.followerGain; row.interactions = acc.interactions;
+          }
+        } catch (e: any) { row.error = String(e.message || e); }
+        rows.push(row);
+      }));
+      return { rows };
     }
     case "meta_pull": {
       if (role !== "admin") return { error: "нет доступа" };

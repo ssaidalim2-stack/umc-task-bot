@@ -121,8 +121,31 @@ function captureFields(it){ if(document.getElementById('f_theme')){ it.theme=val
 const TABMETA={
   home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
-  subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"},
+  subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"},
 };
+// ---- аналитика (Meta) ----
+let AN_SEC='ads', AN_PROJ=null, AN_SINCE=null, AN_UNTIL=null, AN_DATA=null, AN_LOADING=false, AN_ERR=null;
+// цикл «с 15 по 15»
+function cycleDates(back){ // back=0 текущий, 1 прошлый
+  const now=new Date(Date.now()+5*3600*1000);
+  let y=now.getUTCFullYear(), m=now.getUTCMonth();
+  if(now.getUTCDate()<15) m--;
+  m-=back;
+  const s=new Date(Date.UTC(y,m,15)), e=new Date(Date.UTC(y,m+1,15));
+  const today=now.toISOString().slice(0,10);
+  const until=e.toISOString().slice(0,10)<=today?e.toISOString().slice(0,10):today;
+  return [s.toISOString().slice(0,10), until];
+}
+async function anLoad(){
+  if(!AN_SINCE){ const[s,u]=cycleDates(0); AN_SINCE=s; AN_UNTIL=u; }
+  AN_LOADING=true; AN_ERR=null; AN_DATA=null; render();
+  const req=AN_SEC==='cmp'?{type:'analytics_compare',since:AN_SINCE,until:AN_UNTIL}
+    :{type:(AN_SEC==='ads'?'analytics_ads':'analytics_media'),projectKey:AN_PROJ,since:AN_SINCE,until:AN_UNTIL};
+  const r=await api('POST',req);
+  AN_LOADING=false;
+  if(!r||r.error){AN_ERR=(r&&r.error)||'ошибка';}else{AN_DATA=r;}
+  render();
+}
 const SEC=[["video","🎬 Видео"],["design","🎨 Дизайн"],["edit","✂️ Монтаж"]];
 
 async function api(method, body){
@@ -146,7 +169,7 @@ function buildTabs(){
 function render(){
   document.getElementById('period').textContent=(DATA.user.role?roleLabel(DATA.user.role)+' · ':'')+(DATA.period||'');
   const v=document.getElementById('view');
-  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
 }
@@ -415,6 +438,101 @@ function renderMeta(){
   return head+body+`</div>`;
 }
 
+function fmtN(n){ return (n==null?0:n).toLocaleString('ru-RU'); }
+function fmtM(n,cur){ return (Math.round(n*100)/100).toLocaleString('ru-RU')+' '+(cur||''); }
+function renderAnalytics(){
+  const projs=DATA.projects.filter(p=>{const m=(DATA.meta&&DATA.meta.map)||{};return m[p.key]&&(m[p.key].ig||m[p.key].ad);});
+  if(!AN_PROJ||!projs.some(p=>p.key===AN_PROJ)) AN_PROJ=projs[0]?.key||null;
+  if(!AN_SINCE){const[s,u]=cycleDates(0);AN_SINCE=s;AN_UNTIL=u;}
+  const secPills=[['ads','🎯 Таргет'],['media','🎬 Результат видео'],['cmp','⚖️ Сравнение']]
+    .map(([k,l])=>`<div class="pill ${AN_SEC==k?'active':''}" data-ansec="${k}">${l}</div>`).join('');
+  const projPills=AN_SEC==='cmp'?'':`<div class="pills">${projs.map(p=>`<div class="pill ${p.key===AN_PROJ?'active':''}" data-anproj="${p.key}">${esc(p.name.split(' ')[0])}</div>`).join('')}</div>`;
+  const [c0s]=cycleDates(0), [c1s,c1u]=cycleDates(1);
+  const dates=`<div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0">
+    <button class="btn xs ${AN_SINCE===c0s?'':'sec'}" data-ancycle="0">Текущий цикл (15→15)</button>
+    <button class="btn xs ${AN_SINCE===c1s&&AN_UNTIL===c1u?'':'sec'}" data-ancycle="1">Прошлый цикл</button>
+  </div>
+  <div class="row" style="gap:6px">
+    <input type="date" id="anSince" value="${AN_SINCE}" style="flex:1">
+    <input type="date" id="anUntil" value="${AN_UNTIL}" style="flex:1">
+    <button class="btn xs" data-anshow>Показать</button>
+  </div>`;
+  let body='';
+  if(!projs.length) body='<div class="empty">Ни один проект не привязан к Meta.<br>Отчёт → 🔍 Аккаунты → кнопки IG/Ads.</div>';
+  else if(AN_LOADING) body='<div class="empty">⏳ Загружаю данные Meta…</div>';
+  else if(AN_ERR) body=`<div class="empty">⚠️ ${esc(AN_ERR)}</div>`;
+  else if(!AN_DATA){ if(AN_PROJ||AN_SEC==='cmp') setTimeout(anLoad,0); body='<div class="empty">⏳</div>'; }
+  else if(AN_SEC==='ads') body=anAds();
+  else if(AN_SEC==='media') body=anMedia();
+  else body=anCmp();
+  return `<div class="pills">${secPills}</div>${projPills}<div class="card">${dates}</div>${body}`;
+}
+function anAds(){
+  const d=AN_DATA, cur=d.currency;
+  const cpr=d.totals.results?d.totals.spend/d.totals.results:0;
+  let h=`<div class="card"><h3>🎯 Итого за период</h3>
+    <div class="row"><span class="muted">Потрачено</span><b>${fmtM(d.totals.spend,cur)}</b></div>
+    <div class="row"><span class="muted">Результаты</span><b>${fmtN(d.totals.results)}</b></div>
+    <div class="row"><span class="muted">Цена за результат</span><b>${cpr?fmtM(cpr,cur):'—'}</b></div>
+    <div class="row"><span class="muted">Показы / клики</span><b>${fmtN(d.totals.impressions)} / ${fmtN(d.totals.clicks)}</b></div></div>`;
+  if(!d.campaigns.length) return h+'<div class="empty">Кампаний за период нет</div>';
+  h+='<div class="card"><h3>Кампании</h3>'+d.campaigns.map(c=>{
+    const on=c.status==='ACTIVE';
+    const cp=c.results?c.spend/c.results:0;
+    return `<div class="vid" style="align-items:flex-start"><div style="flex:1;min-width:0">
+      <div>${on?'🟢':'⚪️'} ${esc(c.name)}</div>
+      <div class="muted" style="font-size:12px">${fmtM(c.spend,c.currency)} · ${fmtN(c.results)} рез. ${cp?'· '+fmtM(cp,c.currency)+'/рез.':''} · ${fmtN(c.clicks)} кликов</div>
+    </div></div>`;}).join('')+'</div>';
+  return h;
+}
+function anMedia(){
+  const d=AN_DATA, a=d.account;
+  let h=`<div class="card"><h3>📱 Аккаунт за период</h3>
+    <div class="row"><span class="muted">Охват</span><b>${fmtN(a.reach)}</b></div>
+    <div class="row"><span class="muted">Просмотры</span><b>${fmtN(a.views)}</b></div>
+    <div class="row"><span class="muted">Взаимодействия</span><b>${fmtN(a.interactions)}</b></div>
+    <div class="row"><span class="muted">Прирост подписчиков</span><b>+${fmtN(a.followerGain)}</b></div>
+    <div class="row"><span class="muted">Подписчиков сейчас</span><b>${fmtN(a.followers)}</b></div></div>`;
+  if(!d.media.length) return h+'<div class="empty">Публикаций за период нет</div>';
+  const TIC={REELS:'🎬',FEED:'🖼',STORY:'⭕️',VIDEO:'🎬',IMAGE:'🖼',CAROUSEL_ALBUM:'🖼'};
+  h+='<div class="card"><h3>Публикации ('+d.media.length+')</h3>'+d.media.map(m=>`
+    <div class="vid" style="align-items:flex-start">
+      ${m.thumb?`<img src="${esc(m.thumb)}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex:0 0 auto">`:''}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px">${TIC[m.type]||'📄'} ${esc(m.caption)}</div>
+        <div class="muted" style="font-size:12px">${m.date} · ▶️ ${fmtN(m.views)} · 👁 ${fmtN(m.reach)} · ❤️ ${fmtN(m.likes)} · 💬 ${fmtN(m.comments)}${m.saved?' · 🔖 '+fmtN(m.saved):''}</div>
+      </div>
+      ${m.link?`<a href="${esc(m.link)}" target="_blank" style="font-size:12px;flex:0 0 auto">↗</a>`:''}
+    </div>`).join('')+'</div>';
+  return h;
+}
+function anCmp(){
+  const rows=(AN_DATA.rows||[]);
+  if(!rows.length) return '<div class="empty">Нет привязанных проектов</div>';
+  const met=[['spend','💰 Затраты'],['results','🎯 Результаты'],['reach','👁 Охват'],['views','▶️ Просмотры'],['followerGain','👥 +Подписчики']];
+  let h='<div class="card"><h3>⚖️ Сравнение проектов</h3>';
+  for(const[k,l]of met){
+    const max=Math.max(...rows.map(r=>r[k]||0),1);
+    const sum=rows.reduce((a,r)=>a+(r[k]||0),0);
+    h+=`<div class="muted" style="margin-top:10px;font-weight:600">${l}${sum?` · всего ${k==='spend'?fmtM(sum,rows[0].currency):fmtN(sum)}`:''}</div>`;
+    h+=rows.map(r=>{
+      const v=r[k]||0, pct=sum?Math.round(v/sum*100):0;
+      return `<div class="row" style="gap:8px;margin-top:3px"><span style="flex:0 0 90px;font-size:13px">${esc(r.name.split(' ')[0])}</span>
+        <div style="flex:1;height:14px;background:rgba(127,127,127,.15);border-radius:7px;overflow:hidden"><div style="height:100%;width:${Math.round(v/max*100)}%;background:var(--accent)"></div></div>
+        <span style="flex:0 0 auto;font-size:12px" class="muted">${k==='spend'?fmtM(v,r.currency):fmtN(v)} · ${pct}%</span></div>`;
+    }).join('');
+  }
+  const errs=rows.filter(r=>r.error);
+  if(errs.length) h+='<div class="muted" style="font-size:12px;margin-top:8px">'+errs.map(r=>`⚠️ ${esc(r.name)}: ${esc(r.error).slice(0,60)}`).join('<br>')+'</div>';
+  h+='</div>';
+  const labels=rows.map(r=>r.name.split(' ')[0]);
+  const chart={type:'bar',data:{labels,datasets:[
+    {label:'Результаты',data:rows.map(r=>r.results||0),backgroundColor:'#22c55e'},
+    {label:'Охват (тыс.)',data:rows.map(r=>Math.round((r.reach||0)/1000)),backgroundColor:'#60a5fa'},
+    {label:'+Подписчики',data:rows.map(r=>r.followerGain||0),backgroundColor:'#f59e0b'}]}};
+  h+=`<div class="card"><img src="https://quickchart.io/chart?w=560&h=300&c=${encodeURIComponent(JSON.stringify(chart))}" style="width:100%;border-radius:10px"></div>`;
+  return h;
+}
 function renderSubs(){
   if(!DATA.subscriptions.length) return '<div class="card"><h3>💳 Подписки</h3><div class="muted">Пока нет. Добавь в боте: /addsub CapCut 2026-06-01 30</div></div>';
   return `<div class="card"><h3>💳 Подписки</h3>`+DATA.subscriptions.map(s=>`<div class="vid"><span>${esc(s.app)}</span><span class="muted">до ${s.expires_on}</span></div>`).join('')+`</div>`;
@@ -519,8 +637,13 @@ function bind(){
     const r=await api('POST',{type:'meta_status'});
     if(!r||r.error){mOut('⚠️ '+(r&&r.error||'ошибка'));return;}
     if(!r.configured){mOut('Токен не задан (META_TOKEN).');return;}
-    let s='Instagram-аккаунты:\n'+(r.igAccounts||[]).map(a=>`@${a.username} — id ${a.ig_id}`).join('\n');
-    s+='\n\nРекламные кабинеты:\n'+(r.adAccounts||[]).map(a=>`${a.name} — ${a.id}`).join('\n');
+    let s='Instagram-аккаунты:\n'+(r.igAccounts||[]).map(a=>`@${a.username} (${a.src||''}) — id ${a.ig_id}`).join('\n');
+    s+='\n\nРекламные кабинеты:\n'+(r.adAccounts||[]).map(a=>`${a.name}${a.src?' ('+a.src+')':''} — ${a.id}`).join('\n');
+    for(const b of (r.businesses||[])){
+      s+=`\n\n🏢 ${b.name}:`;
+      for(const p of (b.pages||[])) s+=`\n  стр. ${p.name}${p.ig?` · IG @${p.ig.username} — ${p.ig.id}`:''}`;
+      for(const a of (b.adAccounts||[])) s+=`\n  кабинет ${a.name} — ${a.id}`;
+    }
     s+='\n\nПривязка: кнопки IG/Ads у проекта ниже.';
     mOut(s);
     // после загрузки списка — дорисуем кнопки привязки
@@ -532,6 +655,11 @@ function bind(){
     if(!r||r.error){mOut('⚠️ '+(r&&r.error||'ошибка'));return;}
     mOut('✅ Обновлено за '+r.day+'. Перезайди в отчёт.');
   };
+  // ---- аналитика ----
+  document.querySelectorAll('[data-ansec]').forEach(b=>b.onclick=()=>{AN_SEC=b.dataset.ansec;AN_DATA=null;AN_ERR=null;anLoad();});
+  document.querySelectorAll('[data-anproj]').forEach(b=>b.onclick=()=>{AN_PROJ=b.dataset.anproj;AN_DATA=null;AN_ERR=null;anLoad();});
+  document.querySelectorAll('[data-ancycle]').forEach(b=>b.onclick=()=>{const[s,u]=cycleDates(+b.dataset.ancycle);AN_SINCE=s;AN_UNTIL=u;anLoad();});
+  const ansh=document.querySelector('[data-anshow]'); if(ansh) ansh.onclick=()=>{AN_SINCE=val('anSince')||AN_SINCE;AN_UNTIL=val('anUntil')||AN_UNTIL;anLoad();};
   document.querySelectorAll('[data-metabind]').forEach(b=>b.onclick=async()=>{
     const [key,field]=b.dataset.metabind.split('|');
     const acc=window.META_ACC;
