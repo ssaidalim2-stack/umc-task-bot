@@ -3,6 +3,7 @@ import * as d2 from "./db2";
 import { t, Lang } from "./i18n";
 import { bot, safeSend } from "./bot";
 import { buildReport } from "./views";
+import { metaConfigured, pullSnapshot } from "./meta";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
 const HOUR = 60 * 60 * 1000;
@@ -37,6 +38,12 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   }
 
   // (связь с Google-таблицами отключена — контент-план ведётся в самом боте)
+
+  // Meta (IG + Ads): дневной снэпшот за вчера, в 07:00 — до утреннего отчёта
+  if (hour === 7 && metaConfigured() && (await d2.claimMarker("meta_pull", day))) {
+    const yesterday = new Date(now + TZ_OFFSET - 24 * HOUR).toISOString().slice(0, 10);
+    try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
+  }
 
   // сброс повторяющихся задач
   if (dow === 1 && hour === 6 && (await d2.claimMarker("reset_weekly", day))) await resetRecurring("weekly");

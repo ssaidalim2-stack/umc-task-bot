@@ -369,7 +369,50 @@ function renderReport(){
     <div class="muted">🎬 Видео опубликовано: <b>${t.published}/${t.videoTotal}</b></div>${bar(t.published,t.videoTotal)}
     <div class="muted">🖼 Графика готова: <b>${t.graphicDone}/${t.graphicTotal}</b></div>${bar(t.graphicDone,t.graphicTotal)}
     <div class="muted">📌 Открытых задач: <b>${t.openTasks}</b></div></div>
-    <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>`;
+    <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>
+    ${renderMeta()}`;
+}
+
+function renderMeta(){
+  const m=DATA.meta||{};
+  const admin=DATA.user.role==='admin';
+  let head=`<div class="card"><h3>📲 Instagram + Ads</h3>`;
+  if(!m.configured) return head+`<div class="muted">Не подключено. Нужен токен Meta (META_TOKEN) — см. инструкцию у Саида.</div>${admin?'':''}</div>`;
+  let body='';
+  // привязки проектов (admin)
+  if(admin){
+    const map=m.map||{};
+    body+=`<div class="muted" style="margin-bottom:6px">Привязка аккаунтов к проектам:</div>`;
+    body+=DATA.projects.map(p=>{
+      const b=map[p.key]||{};
+      return `<div class="vid"><span>${esc(p.name)}</span><span style="display:flex;gap:6px;align-items:center">
+        <button class="xbtn" data-metabind="${esc(p.key)}|ig">IG ${b.ig?'✅':'—'}</button>
+        <button class="xbtn" data-metabind="${esc(p.key)}|ad">Ads ${b.ad?'✅':'—'}</button></span></div>`;
+    }).join('');
+    body+=`<div class="row" style="gap:6px;margin-top:8px">
+      <button class="btn xs sec" data-metastatus>🔍 Аккаунты</button>
+      <button class="btn xs sec" data-metapull>⬇️ Обновить за вчера</button>
+    </div><div id="metaOut" class="muted" style="font-size:12px;white-space:pre-wrap;margin-top:6px"></div>`;
+  }
+  // снэпшоты по дням
+  const days=m.days||[];
+  if(days.length){
+    body+=`<div class="muted" style="margin-top:10px">Последние дни:</div>`;
+    for(const d of days){
+      const rows=Object.entries(d.snap||{}).map(([k,v])=>{
+        const proj=DATA.projects.find(p=>p.key===k);
+        const nm=proj?proj.name.split(' ')[0]:k;
+        if(v.error) return `<div class="vid"><span>${esc(nm)}</span><span class="muted" style="font-size:12px">⚠️ ${esc(v.error).slice(0,60)}</span></div>`;
+        const ig=v.ig?`👁 ${v.ig.reach} · ▶️ ${v.ig.views} · 👥 ${v.ig.followers}`:'';
+        const ads=v.ads?` · 💰 ${v.ads.spend} ${v.ads.currency} → ${v.ads.results} рез.`:'';
+        return `<div class="vid"><span>${esc(nm)}</span><span class="muted" style="font-size:12px">${ig}${ads}</span></div>`;
+      }).join('');
+      body+=`<div class="muted" style="margin-top:6px;font-weight:600">${d.day}</div>${rows}`;
+    }
+  } else if(!admin){
+    body+=`<div class="muted">Данных пока нет — снэпшоты подтягиваются каждое утро.</div>`;
+  }
+  return head+body+`</div>`;
 }
 
 function renderSubs(){
@@ -469,6 +512,35 @@ function bind(){
   document.querySelectorAll('[data-frowdel]').forEach(b=>b.onclick=()=>fmut(it=>{const[fi,ri]=b.dataset.frowdel.split(':');it.frames[+fi].rows.splice(+ri,1);}));
   document.querySelectorAll('[data-frole]').forEach(s=>s.onchange=()=>fmut(it=>{const[fi,ri]=s.dataset.frole.split(':');it.frames[+fi].rows[+ri].r=s.value;}));
   document.querySelectorAll('[data-frole2]').forEach(b=>b.onclick=()=>{const name=(prompt('Название роли (напр. Голос, Локация, Актёр):')||'').trim(); if(name)fmut(it=>it.frames[+b.dataset.frole2].rows.push({r:name,t:''}));});
+  // ---- Meta (IG + Ads) ----
+  const mOut=(t)=>{const e=document.getElementById('metaOut'); if(e)e.textContent=t;};
+  const mst=document.querySelector('[data-metastatus]'); if(mst) mst.onclick=async()=>{
+    mOut('Проверяю токен…');
+    const r=await api('POST',{type:'meta_status'});
+    if(!r||r.error){mOut('⚠️ '+(r&&r.error||'ошибка'));return;}
+    if(!r.configured){mOut('Токен не задан (META_TOKEN).');return;}
+    let s='Instagram-аккаунты:\n'+(r.igAccounts||[]).map(a=>`@${a.username} — id ${a.ig_id}`).join('\n');
+    s+='\n\nРекламные кабинеты:\n'+(r.adAccounts||[]).map(a=>`${a.name} — ${a.id}`).join('\n');
+    s+='\n\nПривязка: кнопки IG/Ads у проекта ниже.';
+    mOut(s);
+    // после загрузки списка — дорисуем кнопки привязки
+    window.META_ACC=r;
+  };
+  const mpl=document.querySelector('[data-metapull]'); if(mpl) mpl.onclick=async()=>{
+    mOut('Тяну данные за вчера…');
+    const r=await api('POST',{type:'meta_pull'});
+    if(!r||r.error){mOut('⚠️ '+(r&&r.error||'ошибка'));return;}
+    mOut('✅ Обновлено за '+r.day+'. Перезайди в отчёт.');
+  };
+  document.querySelectorAll('[data-metabind]').forEach(b=>b.onclick=async()=>{
+    const [key,field]=b.dataset.metabind.split('|');
+    const acc=window.META_ACC;
+    let hint=field==='ig'?'ID IG-аккаунта':'ID кабинета (act_…)';
+    if(acc){hint+='\n\n'+(field==='ig'?(acc.igAccounts||[]).map(a=>`@${a.username}: ${a.ig_id}`).join('\n'):(acc.adAccounts||[]).map(a=>`${a.name}: ${a.id}`).join('\n'));}
+    const v=(prompt(hint)||'').trim(); if(!v)return;
+    const r=await api('POST',{type:'meta_bind',projectKey:key,field,value:v});
+    if(r&&r.map){DATA.meta.map=r.map;render();}
+  });
   document.querySelectorAll('[data-mv]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const[id,toPos]=b.dataset.mv.split(':');act({type:'item_move',id:+id,planId:TBL_PLAN,toPos:+toPos});});
   document.querySelectorAll('[data-daily]').forEach(b=>b.onclick=()=>act({type:'daily_toggle',id:+b.dataset.daily}));
   document.querySelectorAll('[data-daily-del]').forEach(b=>b.onclick=()=>act({type:'daily_delete',id:+b.dataset.dailyDel}));

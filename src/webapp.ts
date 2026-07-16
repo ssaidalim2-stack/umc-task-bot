@@ -4,6 +4,7 @@ import * as db from "./db";
 import * as d2 from "./db2";
 import { bot } from "./bot";
 import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNERS, nextStage } from "./projects";
+import * as meta from "./meta";
 
 // ---------- проверка подписи Telegram WebApp ----------
 export function validateInitData(initData: string): { ok: boolean; user?: any } {
@@ -242,12 +243,20 @@ export async function getData(userId: number) {
     }
   }
 
+  // Meta (IG+Ads): последние 7 дневных снэпшотов — только для админа/менеджера
+  let metaOut: any = { configured: meta.metaConfigured(), days: [], map: {} };
+  if ((role === "admin" || role === "manager") && meta.metaConfigured()) {
+    const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() + 5 * 3600 * 1000 - (i + 1) * 86400000).toISOString().slice(0, 10));
+    const [map, ...snaps] = await Promise.all([meta.getMetaMap(), ...days.map((d) => meta.getSnapshot(d))]);
+    metaOut = { configured: true, map, days: days.map((d, i) => ({ day: d, snap: snaps[i] })).filter((x) => x.snap) };
+  }
+
   return {
     user: { id: userId, name: member?.name || "", role, is_admin: isAdmin },
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, myWork, board, teamTasks, stats, daily,
+    confirmable, team, myWork, board, teamTasks, stats, daily, meta: metaOut,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -360,6 +369,24 @@ export async function doAction(userId: number, action: any) {
       const title = (action.title || "").trim();
       if (title) await d2.updateTaskTitle(+action.id, title);
       break;
+    }
+    // ---------- Meta (IG + Ads) ----------
+    case "meta_status": {
+      if (role !== "admin") return { error: "нет доступа" };
+      if (!meta.metaConfigured()) return { configured: false };
+      try { return { configured: true, ...(await meta.listAvailableAccounts()) }; }
+      catch (e: any) { return { configured: true, error: String(e.message || e) }; }
+    }
+    case "meta_bind": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await meta.setMetaBinding(String(action.projectKey), action.field === "ad" ? "ad" : "ig", String(action.value || "").trim());
+      return { map: await meta.getMetaMap() };
+    }
+    case "meta_pull": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const day = String(action.day || new Date(Date.now() + 5 * 3600 * 1000 - 86400000).toISOString().slice(0, 10));
+      try { return { day, snap: await meta.pullSnapshot(day) }; }
+      catch (e: any) { return { error: String(e.message || e) }; }
     }
     case "task_submit_file": {
       const t = await d2.getTaskRow(+action.id);
