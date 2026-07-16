@@ -45,8 +45,15 @@
   .xbtn{appearance:none;border:1px solid rgba(127,127,127,.3);background:rgba(127,127,127,.12);color:var(--text);border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;line-height:1}
   .vid{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(127,127,127,.15);gap:8px}
   .vid:last-child{border-bottom:0}
-  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;overflow-x:auto;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
-  .tabbar button{flex:0 0 auto;min-width:20%;background:none;border:0;color:var(--hint);padding:8px 6px 10px;font-size:11px;cursor:pointer}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
+  .tabbar button{flex:1 1 0;min-width:0;background:none;border:0;color:var(--hint);padding:8px 4px 10px;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .msheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+  .msheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--bg);border-radius:18px 18px 0 0;padding:14px 14px calc(58px + env(safe-area-inset-bottom));box-shadow:0 -6px 30px rgba(0,0,0,.35)}
+  .msheet-title{font-size:14px;font-weight:700;margin-bottom:10px}
+  .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .mcell{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 4px;border-radius:12px;background:var(--card);font-size:11px;cursor:pointer;text-align:center}
+  .mcell span{font-size:22px}
+  .mcell.active{outline:2px solid var(--btn);color:var(--btn)}
   .tabbar button.active{color:var(--btn)}
   .tabbar .ic{display:block;font-size:20px;margin-bottom:2px}
   .pills{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px}
@@ -160,10 +167,31 @@ async function act(a){ haptic(); const res=await api('POST',a); if(res&&res.proj
 function bar(done,total){ const p=total?Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
 function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
+// первые 4 вкладки закреплены внизу, остальные — в сетке «Ещё»
+const TAB_PRIMARY={admin:["home","tasks","plan","analytics"],manager:["home","tasks","plan","analytics"]};
 function buildTabs(){
   const el=document.getElementById('tabs');
-  el.innerHTML=DATA.tabs.map(t=>`<button data-t="${t}" class="${t===TAB?'active':''}"><span class="ic">${TABMETA[t].ic}</span>${TABMETA[t].t}</button>`).join('');
-  el.querySelectorAll('button').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;buildTabs();render();});
+  const all=DATA.tabs;
+  const primary=(TAB_PRIMARY[DATA.user.role]||all).filter(t=>all.includes(t));
+  const useMore=all.length>5;
+  const shown=useMore?primary:all;
+  const more=all.filter(t=>!shown.includes(t));
+  const btn=t=>`<button data-t="${t}" class="${t===TAB?'active':''}"><span class="ic">${TABMETA[t].ic}</span>${TABMETA[t].t}</button>`;
+  el.innerHTML=shown.map(btn).join('')+(useMore?`<button data-more class="${more.includes(TAB)?'active':''}"><span class="ic">☰</span>Ещё</button>`:'');
+  el.querySelectorAll('button[data-t]').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;closeMore();buildTabs();render();});
+  const mb=el.querySelector('[data-more]'); if(mb) mb.onclick=()=>toggleMore(more);
+}
+function closeMore(){ const s=document.getElementById('moreSheet'); if(s) s.remove(); }
+function toggleMore(more){
+  if(document.getElementById('moreSheet')){ closeMore(); return; }
+  haptic();
+  const s=document.createElement('div'); s.id='moreSheet';
+  s.innerHTML=`<div class="msheet-bg"></div><div class="msheet">
+    <div class="msheet-title">Все разделы</div>
+    <div class="mgrid">${DATA.tabs.map(t=>`<div class="mcell ${t===TAB?'active':''}" data-mt="${t}"><span>${TABMETA[t].ic}</span>${TABMETA[t].t}</div>`).join('')}</div></div>`;
+  document.body.appendChild(s);
+  s.querySelector('.msheet-bg').onclick=closeMore;
+  s.querySelectorAll('[data-mt]').forEach(c=>c.onclick=()=>{TAB=c.dataset.mt;closeMore();buildTabs();render();});
 }
 
 function render(){
