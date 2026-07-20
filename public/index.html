@@ -276,7 +276,12 @@ function renderFrames(it){
       ${ro?`<div class="frowbtns"><button class="btn xs sec" data-fadd="${fi}:Д">＋ действие</button><button class="btn xs sec" data-fadd="${fi}:Т">＋ текст</button><button class="btn xs sec" data-frole2="${fi}">＋ роль</button></div>`:''}
     </div>`;
   }).join('');
-  return `<div class="framewrap">${frames||'<div class="muted" style="font-size:12px">Сценарий по кадрам пуст</div>'}
+  // старый текстовый сценарий (до перехода на кадры) — НЕ прятать, иначе выглядит как потеря данных
+  const legacy=(!it.frames.length && it.script)
+    ? `<textarea id="f_script" style="margin-bottom:8px" ${ro?'':'disabled'}>${esc(it.script)}</textarea>
+       <div class="muted" style="font-size:12px;margin-bottom:6px">↑ старый текст сценария (до кадров). Можно править прямо тут, или разбить по кадрам кнопками ниже.</div>`
+    : '';
+  return `<div class="framewrap">${legacy}${frames||(legacy?'':'<div class="muted" style="font-size:12px">Сценарий по кадрам пуст</div>')}
     ${ro?`<div class="frowbtns" style="margin-top:8px">
       <button class="btn xs" data-fnew="hook">＋ Visual hook</button>
       <button class="btn xs" data-fnew="frame">＋ Кадр</button>
@@ -645,7 +650,7 @@ function bind(){
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:val('f_script'),frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
   // ---- редактор сценария по кадрам ----
   const _ci=()=>TBL_ITEMS.find(x=>x.id==TBL_OPEN);
   const fmut=(fn)=>{const it=_ci(); if(!it)return; captureFields(it); if(!it.frames)it.frames=[]; fn(it); render();};
