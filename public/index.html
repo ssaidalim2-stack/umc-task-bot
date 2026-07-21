@@ -21,6 +21,12 @@
   header h1{margin:0;font-size:20px;font-weight:700}
   header .sub{color:var(--hint);font-size:13px;margin-top:2px}
   .wrap{padding:8px 12px}
+  /* на iPad/десктопе (широкий вьюпорт) центрируем контент разумной ширины вместо растягивания на весь экран */
+  @media (min-width:720px){
+    header,.wrap{max-width:640px;margin-left:auto;margin-right:auto}
+    .tabbar,.msheet{max-width:640px;left:50%;transform:translateX(-50%)}
+    .tabbar{border-radius:14px 14px 0 0}
+  }
   .card{background:var(--card);border-radius:14px;padding:14px;margin:10px 0}
   .card h3{margin:0 0 8px;font-size:16px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -90,6 +96,9 @@
 
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
+// на iPad/десктопе Mini App иначе открывается крошечным модальным окном — просим настоящий полный экран
+try{ if(tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
+try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
 // сжать фото на клиенте перед отправкой (иначе JSON-тело может быть слишком большим)
