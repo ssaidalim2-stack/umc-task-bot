@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import { bot } from "./bot";
@@ -82,6 +82,21 @@ export function parseShootDay(s: string | null | undefined): string | null {
   const day = new Date(Date.UTC(y, mo - 1, d));
   if (Number.isNaN(day.getTime())) return null;
   return day.toISOString().slice(0, 10);
+}
+
+// фото из ТЗ-формы приходит data-URL'ом (сжатое на клиенте), тут просто декодируем base64
+function parseDataUrlImage(s?: string | null): Buffer | null {
+  if (!s || typeof s !== "string") return null;
+  const m = s.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+  if (!m) return null;
+  try { return Buffer.from(m[1], "base64"); } catch { return null; }
+}
+// подпись к фото ограничена 1024 символами Telegram — если текст длиннее, шлём фото без подписи + отдельным сообщением
+async function sendTzMessage(chatId: number, msg: string, photoBuf: Buffer | null): Promise<void> {
+  if (!photoBuf) { await bot.api.sendMessage(chatId, msg); return; }
+  if (msg.length <= 1024) { await bot.api.sendPhoto(chatId, new InputFile(photoBuf, "tz.jpg"), { caption: msg }); return; }
+  await bot.api.sendPhoto(chatId, new InputFile(photoBuf, "tz.jpg"));
+  await bot.api.sendMessage(chatId, msg);
 }
 
 // поля пункта контент-плана храним JSON-ом в content_items.title (без изменения схемы)
@@ -505,8 +520,9 @@ export async function doAction(userId: number, action: any) {
       const title = `ТЗ • ${sec.label}${proj ? " • " + proj.name : ""}: ${text.slice(0, 50)}`;
       await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId });
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
-      if (specialist) { try { await bot.api.sendMessage(specialist.telegram_id, msg); } catch {} }
-      for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
+      const photoBuf = parseDataUrlImage(action.photo);
+      if (specialist) { try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {} }
+      for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await sendTzMessage(b.chat_id, msg, photoBuf); } catch {} }
       break;
     }
 

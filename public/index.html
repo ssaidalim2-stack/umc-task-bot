@@ -91,7 +91,28 @@
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 const INIT = tg.initData || "";
-let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null;
+let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
+// сжать фото на клиенте перед отправкой (иначе JSON-тело может быть слишком большим)
+function readImageCompressed(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const img=new Image();
+      img.onload=()=>{
+        const maxDim=1280;
+        let w=img.width,h=img.height;
+        if(w>maxDim||h>maxDim){ const s=maxDim/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        resolve(c.toDataURL('image/jpeg',0.75));
+      };
+      img.onerror=()=>reject(new Error('img'));
+      img.src=e.target.result;
+    };
+    reader.onerror=()=>reject(new Error('file'));
+    reader.readAsDataURL(file);
+  });
+}
 // шаблоны ТЗ по разделам: [id, label, многострочное]
 const TZ_TEMPLATES={
   video:[["idea","Идея / сценарий",true],["reference","Референс",false],["props","Реквизиты",true],["shoot","Дата съёмки",false],["deadline","Дедлайн",false],["notes","Примечания",true]],
@@ -610,12 +631,16 @@ function renderTZ(){
       +items.map(it=>`<div class="pill ${TZ_ITEM==it.id?'active':''}" data-tzitem="${it.id}">#${it.idx}${it.theme?': '+esc(it.theme.slice(0,18)):''}</div>`).join('');
     itemPicker=`<div class="muted">Привязать к пункту плана (чтобы задача авто-закрылась при отметке «Снято»):</div><div class="pills">${pills}</div>`;
   } else if(TZ_ITEM!=null){ TZ_ITEM=null; }
+  const photoBlock=TZ_PHOTO
+    ? `<div class="row" style="gap:8px;align-items:center;margin:6px 0"><img src="${TZ_PHOTO}" style="max-height:90px;border-radius:8px"><button class="xbtn" data-tzphoto-clear>✕ убрать фото</button></div>`
+    : `<div class="muted">Фото (необязательно):</div><input type="file" id="tzPhoto" accept="image/*">`;
   return `<div class="card"><h3>✍️ Дать ТЗ</h3>
     <div class="muted">Раздел:</div><div class="pills">${secPills}</div>
     <div class="muted">Исполнитель:</div><div class="pills">${execPills}</div>
     <div class="muted">Проект:</div><div class="pills">${projPills}</div>
     ${itemPicker}
     <div style="border-top:1px solid rgba(127,127,127,.2);margin:8px 0;padding-top:6px">${fields}</div>
+    ${photoBlock}
     <button class="btn full" data-tz-send>📨 Отправить ТЗ</button>
     <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
 }
@@ -664,8 +689,11 @@ function bind(){
   document.querySelectorAll('[data-teamrole]').forEach(s=>s.onchange=()=>act({type:'team_set_role',id:+s.dataset.teamrole,role:s.value}));
   document.querySelectorAll('[data-teamdel]').forEach(b=>b.onclick=()=>{const id=+b.dataset.teamdel;const del=()=>act({type:'team_delete',id});if(tg.showConfirm){tg.showConfirm('Удалить участника из команды?',(ok)=>{if(ok)del();});}else del();});
   document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{captureTZ();TZ_PROJ=b.dataset.tzp;TZ_ITEM=null;render();});
+  const tzPhotoInput=document.getElementById('tzPhoto');
+  if(tzPhotoInput) tzPhotoInput.onchange=async()=>{const f=tzPhotoInput.files[0];if(!f)return;try{TZ_PHOTO=await readImageCompressed(f);}catch(e){tg.showAlert&&tg.showAlert('Не удалось прочитать фото');}render();};
+  document.querySelectorAll('[data-tzphoto-clear]').forEach(b=>b.onclick=()=>{TZ_PHOTO=null;render();});
   const send=document.querySelector('[data-tz-send]');
-  if(send) send.onclick=async()=>{captureTZ();const tpl=TZ_TEMPLATES[TZ_SEC]||[];const lines=[];tpl.forEach(([id,label])=>{const v=(TZ_FIELDS[id]||'').trim();if(v)lines.push(label+': '+v);});const text=lines.join('\n');if(!text){tg.showAlert&&tg.showAlert('Заполни хотя бы одно поле');return;}await act({type:'tz',section:TZ_SEC,execId:TZ_EXEC,projectId:TZ_PROJ||null,itemId:TZ_ITEM,text});TZ_FIELDS={};render();tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
+  if(send) send.onclick=async()=>{captureTZ();const tpl=TZ_TEMPLATES[TZ_SEC]||[];const lines=[];tpl.forEach(([id,label])=>{const v=(TZ_FIELDS[id]||'').trim();if(v)lines.push(label+': '+v);});const text=lines.join('\n');if(!text){tg.showAlert&&tg.showAlert('Заполни хотя бы одно поле');return;}await act({type:'tz',section:TZ_SEC,execId:TZ_EXEC,projectId:TZ_PROJ||null,itemId:TZ_ITEM,text,photo:TZ_PHOTO||null});TZ_FIELDS={};TZ_PHOTO=null;render();tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
 
   // ---- таблица ----
   document.querySelectorAll('[data-tproj]').forEach(b=>b.onclick=()=>{TBL_PROJ=+b.dataset.tproj;TBL_PLAN=null;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
