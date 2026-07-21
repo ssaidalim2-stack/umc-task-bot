@@ -4,6 +4,7 @@ import { t, Lang } from "./i18n";
 import { bot, safeSend } from "./bot";
 import { buildReport } from "./views";
 import { metaConfigured, pullSnapshot } from "./meta";
+import { parseShootDay, parseItemData } from "./webapp";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
 const HOUR = 60 * 60 * 1000;
@@ -35,6 +36,7 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
     if (await d2.claimMarker("report_daily", day)) sent += await sendReport("Ежедневный отчёт");
     if (dow === 1 && (await d2.claimMarker("report_weekly", day))) sent += await sendReport("Еженедельный отчёт");
     if (dom === 1 && (await d2.claimMarker("report_monthly", day))) sent += await sendReport("Ежемесячный отчёт");
+    sent += await shootReminders(day);
   }
 
   // (связь с Google-таблицами отключена — контент-план ведётся в самом боте)
@@ -128,6 +130,34 @@ async function sendReport(title: string): Promise<number> {
     try { await bot.api.sendPhoto(a.telegram_id, r.chartUrl, { caption: r.text, parse_mode: "Markdown" }); }
     catch { await safeSend(a.telegram_id, r.text, { parse_mode: "Markdown" }); }
     sent++;
+  }
+  return sent;
+}
+
+// ---------- напоминания о съёмочных днях (за 2 дня и в день съёмки) ----------
+async function shootReminders(day: string): Promise<number> {
+  let sent = 0;
+  const [plans, items, projects] = await Promise.all([d2.getAllActivePlans(), d2.getAllItems(), d2.getProjects()]);
+  const activeIds = new Set(plans.map((p) => p.id));
+  const projById = new Map(projects.map((p) => [p.id, p]));
+  const todayMs = new Date(day + "T00:00:00Z").getTime();
+  for (const it of items) {
+    if (!activeIds.has(it.plan_id) || it.type !== "video") continue;
+    if (!["idea", "script"].includes(it.stage)) continue; // уже снято/дальше — напоминать не о чем
+    const data = parseItemData((it as any).title);
+    const shootDay = parseShootDay(data.shoot_date);
+    if (!shootDay) continue;
+    const daysUntil = Math.round((new Date(shootDay + "T00:00:00Z").getTime() - todayMs) / HOUR / 24);
+    if (daysUntil !== 2 && daysUntil !== 0) continue;
+    if (!(await d2.claimMarker(`shoot${daysUntil}:${it.id}`, day))) continue;
+    const proj = projById.get(it.project_id);
+    const when = daysUntil === 0 ? "СЕГОДНЯ" : "через 2 дня";
+    const theme = data.theme ? ` — ${data.theme}` : "";
+    const msg = `🎥 Съёмка ${when}!\n${proj?.name || ""} Видео #${it.idx}${theme}\nДата: ${data.shoot_date}`;
+    const recips = new Set<number>();
+    for (const m of await d2.membersWithRole("videographer")) recips.add(m.telegram_id);
+    for (const m of await d2.membersWithRole("manager")) recips.add(m.telegram_id);
+    for (const cid of recips) { try { await bot.api.sendMessage(cid, msg); sent++; } catch {} }
   }
   return sent;
 }

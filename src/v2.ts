@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import * as views from "./views";
-import { STAGE_OWNERS, STAGE_LABEL, nextStage, APPS } from "./projects";
+import { STAGE_OWNER_ROLES, STAGE_LABEL, nextStage, APPS } from "./projects";
 import { roleOf } from "./webapp";
 
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
@@ -218,7 +218,7 @@ export function registerV2(bot: Bot) {
     await d2.setTaskStatus(t.id, next, { description: desc } as any);
     let recips: number[];
     if (next === "await_admin") recips = [...new Set([...ENV_ADMINS, ...(await db.listAdmins()).map((a) => a.telegram_id)])];
-    else { const m = await d2.resolveMember("Бобур"); recips = m ? [m.telegram_id] : []; }
+    else recips = (await d2.membersWithRole("manager")).map((m) => m.telegram_id);
     for (const cid of recips) { if (cid === ctx.from!.id) continue; try { await ctx.api.sendMessage(cid, `🔔 ${member?.name || "Исполнитель"} сдал(а) работу по «${t.title}» (файл в группе). Нужно утверждение в приложении → Задачи.`); } catch {} }
     await ctx.reply(`✅ Файл принят${forwarded ? " и отправлен в группу проекта" : ""}. Задача передана на утверждение.`);
   });
@@ -227,11 +227,15 @@ export function registerV2(bot: Bot) {
 // уведомление ответственных за этап + постинг в привязанные группы
 async function notifyStage(bot: Bot, projectId: number, idx: number, stage: string) {
   const proj = await d2.getProject(projectId);
-  const owners = STAGE_OWNERS[stage] || [];
+  const roles = STAGE_OWNER_ROLES[stage] || [];
   const msg = `🎬 ${proj?.name} — Видео #${idx}\nЭтап: ${STAGE_LABEL[stage]}\nТвой шаг — приступай.`;
-  for (const anchor of owners) {
-    const mem = await d2.resolveMember(anchor);
-    if (mem) { try { await bot.api.sendMessage(mem.telegram_id, msg); } catch {} }
+  const notified = new Set<number>();
+  for (const role of roles) {
+    for (const mem of await d2.membersWithRole(role)) {
+      if (notified.has(mem.telegram_id)) continue;
+      notified.add(mem.telegram_id);
+      try { await bot.api.sendMessage(mem.telegram_id, msg); } catch {}
+    }
   }
   // группы
   const bindings = await d2.bindingsFor(projectId, stage);
@@ -240,10 +244,7 @@ async function notifyStage(bot: Bot, projectId: number, idx: number, stage: stri
 
 async function collectConfirmers(): Promise<number[]> {
   const ids = new Set<number>(ENV_ADMINS);
-  for (const anchor of ["Саид", "Бобур"]) {
-    const m = await d2.resolveMember(anchor);
-    if (m) ids.add(m.telegram_id);
-  }
+  for (const m of await d2.membersWithRole("manager")) ids.add(m.telegram_id);
   const admins = await db.listAdmins();
   admins.forEach((a) => ids.add(a.telegram_id));
   return [...ids];

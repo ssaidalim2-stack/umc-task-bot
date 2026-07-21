@@ -13,13 +13,13 @@ export const STAGE_LABEL: Record<string, string> = {
   done: "✅ Готово",
 };
 
-// Кто отвечает за этап (имена-якоря для резолвера участников)
-export const STAGE_OWNERS: Record<string, string[]> = {
-  idea: ["Саид", "Бобур"],
-  script: ["Саид", "Бобур"],
-  shoot: ["Самандар"],
-  edit: ["Асрор"],
-  published: ["Саид", "Бобур"],
+// Кто отвечает за этап — по РОЛИ (не по имени), чтобы смена состава команды не ломала уведомления
+export const STAGE_OWNER_ROLES: Record<string, string[]> = {
+  idea: ["admin", "manager"],
+  script: ["admin", "manager"],
+  shoot: ["videographer"],
+  edit: ["editor"],
+  published: ["admin", "manager"],
 };
 
 // Ключевые слова для сопоставления имени-якоря с участником в БД

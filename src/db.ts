@@ -69,6 +69,24 @@ export async function listAdmins(): Promise<Member[]> {
   return (data as Member[]) ?? [];
 }
 
+export async function deleteMember(telegramId: number): Promise<void> {
+  await supabase.from("members").delete().eq("telegram_id", telegramId);
+}
+
+const KNOWN_ROLES = ["manager", "videographer", "editor", "designer", "member"];
+// явная роль (specialization хранит канонический ключ) с фолбэком на старое сопоставление по имени
+export function memberRole(m: Member | null): string {
+  if (!m) return "member";
+  const explicit = (m.specialization || "").trim().toLowerCase();
+  if (KNOWN_ROLES.includes(explicit)) return explicit;
+  const hay = ((m.specialization || "") + " " + (m.name || "") + " " + (m.username || "")).toLowerCase();
+  if (/менедж|manager|smm|бобур|боб|bob/.test(hay)) return "manager";
+  if (/монтаж|editor|монтаж[её]р|асрор|asror/.test(hay)) return "editor";
+  if (/видеограф|съ[её]м|videograph|video|саманд|saman/.test(hay)) return "videographer";
+  if (/дизайн|design|влад|vlad/.test(hay)) return "designer";
+  return "member";
+}
+
 // ---------- tasks ----------
 
 export async function createTask(input: {

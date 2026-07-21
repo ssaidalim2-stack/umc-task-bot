@@ -91,9 +91,7 @@
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 const INIT = tg.initData || "";
-let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC="Самандар";
-const EXEC=["Самандар","Асрор","Владимир"];
-const SEC_DEFAULT={video:"Самандар",design:"Владимир",edit:"Асрор"};
+let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null;
 // шаблоны ТЗ по разделам: [id, label, многострочное]
 const TZ_TEMPLATES={
   video:[["idea","Идея / сценарий",true],["reference","Референс",false],["props","Реквизиты",true],["shoot","Дата съёмки",false],["deadline","Дедлайн",false],["notes","Примечания",true]],
@@ -108,7 +106,7 @@ let ASSIGN_I=0;
 const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["photo","📷 Фото"]];
 const TYPE_ICON={video:"🎬",graphic:"🖼",photo:"📷"};
 function STATUS_OPTS(type){ return type==='video'
-  ? [["idea","🕒 В плане"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]]
+  ? [["idea","🕒 В плане"],["script","📝 Сценарий готов"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]]
   : [["todo","🕒 В работе"],["done","✅ Готово"]]; }
 function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
 const LANG_OPTS=[["ru","🇷🇺 Рус"],["uz","🇺🇿 Узб"],["en","🇬🇧 Англ"]];
@@ -128,7 +126,7 @@ function captureFields(it){ if(document.getElementById('f_theme')){ it.theme=val
 const TABMETA={
   home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
-  subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"},
+  subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"}, team:{ic:"👥",t:"Команда"},
 };
 // ---- аналитика (Meta) ----
 let AN_SEC='ads', AN_PROJ=null, AN_SINCE=null, AN_UNTIL=null, AN_DATA=null, AN_LOADING=false, AN_ERR=null;
@@ -162,7 +160,7 @@ async function api(method, body){
 }
 function haptic(){ try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){} }
 async function load(){ try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
-async function act(a){ haptic(); const res=await api('POST',a); if(res&&res.projects){DATA=res;} else if(res&&res.items){TBL_ITEMS=res.items;} render(); }
+async function act(a){ haptic(); const res=await api('POST',a); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);} else if(res&&res.projects){DATA=res;} else if(res&&res.items){TBL_ITEMS=res.items;} render(); }
 
 function bar(done,total){ const p=total?Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
 function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -197,7 +195,7 @@ function toggleMore(more){
 function render(){
   document.getElementById('period').textContent=(DATA.user.role?roleLabel(DATA.user.role)+' · ':'')+(DATA.period||'');
   const v=document.getElementById('view');
-  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
 }
@@ -402,9 +400,9 @@ function renderTasks(){
     h+='</div>';
   }
   if(canEdit()){
-    const team=DATA.team||[];
+    const team=(DATA.team||[]).filter(m=>m.id!=null);
     if(ASSIGN_I>=team.length) ASSIGN_I=0;
-    const pills=team.map((m,i)=>`<div class="pill ${i==ASSIGN_I?'active':''}" data-assignto="${i}">${esc(m.name)}</div>`).join('');
+    const pills=team.length?team.map((m,i)=>`<div class="pill ${i==ASSIGN_I?'active':''}" data-assignto="${i}">${esc(m.name)} · ${esc(m.role)}</div>`).join(''):'<div class="muted" style="font-size:12px">В команде пока никто не назначен на роль.</div>';
     h+=`<div class="card"><h3>➕ Назначить задачу</h3>
       <div class="muted">Исполнитель:</div><div class="pills">${pills}</div>
       <input id="assignTitle" placeholder="Что нужно сделать…">
@@ -592,7 +590,11 @@ function renderWork(){
 
 function renderTZ(){
   const secPills=SEC.map(([k,l])=>`<div class="pill ${k==TZ_SEC?'active':''}" data-sec="${k}">${l}</div>`).join('');
-  const execPills=EXEC.map(n=>`<div class="pill ${n==TZ_EXEC?'active':''}" data-exec="${n}">${n}</div>`).join('');
+  const specs=(DATA.specialists&&DATA.specialists[TZ_SEC])||[];
+  if(TZ_EXEC==null && specs.length) TZ_EXEC=specs[0].id;
+  const execPills=specs.length
+    ? specs.map(s=>`<div class="pill ${s.id==TZ_EXEC?'active':''}" data-exec="${s.id}">${esc(s.name)}</div>`).join('')
+    : '<div class="muted" style="font-size:12px">Нет сотрудника с этой ролью — назначь роль во вкладке «Команда».</div>';
   const projPills=`<div class="pill ${TZ_PROJ===''?'active':''}" data-tzp="">Общее</div>`+DATA.projects.map(p=>`<div class="pill ${TZ_PROJ==p.id?'active':''}" data-tzp="${p.id}">${esc(p.name)}</div>`).join('');
   const fields=(TZ_TEMPLATES[TZ_SEC]||[]).map(([id,label,big])=>{
     const v=esc(TZ_FIELDS[id]||'');
@@ -600,15 +602,38 @@ function renderTZ(){
       ? `<div class="muted">${label}:</div><textarea id="tz_${id}" style="min-height:60px">${v}</textarea>`
       : `<div class="muted">${label}:</div><input id="tz_${id}" value="${v}">`;
   }).join('');
+  let itemPicker='';
+  if(TZ_SEC==='video' && TZ_PROJ){
+    if(TZ_ITEMS_FOR!==TZ_PROJ){ TZ_ITEMS=null; TZ_ITEMS_FOR=TZ_PROJ; api('POST',{type:'plan_active_items',projectId:TZ_PROJ}).then(r=>{TZ_ITEMS=(r&&r.items)||[]; render();}); }
+    const items=TZ_ITEMS||[];
+    const pills='<div class="pill '+(TZ_ITEM==null?'active':'')+'" data-tzitem="">Без привязки</div>'
+      +items.map(it=>`<div class="pill ${TZ_ITEM==it.id?'active':''}" data-tzitem="${it.id}">#${it.idx}${it.theme?': '+esc(it.theme.slice(0,18)):''}</div>`).join('');
+    itemPicker=`<div class="muted">Привязать к пункту плана (чтобы задача авто-закрылась при отметке «Снято»):</div><div class="pills">${pills}</div>`;
+  } else if(TZ_ITEM!=null){ TZ_ITEM=null; }
   return `<div class="card"><h3>✍️ Дать ТЗ</h3>
     <div class="muted">Раздел:</div><div class="pills">${secPills}</div>
     <div class="muted">Исполнитель:</div><div class="pills">${execPills}</div>
     <div class="muted">Проект:</div><div class="pills">${projPills}</div>
+    ${itemPicker}
     <div style="border-top:1px solid rgba(127,127,127,.2);margin:8px 0;padding-top:6px">${fields}</div>
     <button class="btn full" data-tz-send>📨 Отправить ТЗ</button>
     <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
 }
 
+const ROLE_OPTS_TEAM=[["admin","Админ"],["manager","Менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["member","Сотрудник"]];
+function renderTeam(){
+  const rows=(DATA.teamAll||[]).map(m=>{
+    const opts=ROLE_OPTS_TEAM.map(([k,l])=>`<option value="${k}" ${m.role==k?'selected':''}>${l}</option>`).join('');
+    return `<div class="vid" style="align-items:center">
+      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${m.username?'@'+esc(m.username):''}</div></div>
+      <select class="rsel" data-teamrole="${m.id}" style="width:auto;min-width:120px">${opts}</select>
+      <button class="xbtn" data-teamdel="${m.id}" title="Удалить из команды">🗑</button>
+    </div>`;
+  }).join('');
+  return `<div class="card"><h3>👥 Команда</h3>
+    ${rows||'<div class="muted">Пока никто не заходил в бота.</div>'}
+    <div class="muted" style="font-size:12px;margin-top:10px">Новый человек появится тут сам, как только откроет бота (/start). Выбери ему роль в списке — она определяет вкладки, кому назначать ТЗ и куда идут уведомления по этапам.</div></div>`;
+}
 function renderMyWork(){
   const w=DATA.myWork||[];
   if(!w.length) return '<div class="card"><h3>🗂️ Моя работа</h3><div class="muted">Сейчас нет элементов на твоём этапе 🎉</div></div>';
@@ -631,13 +656,16 @@ function bind(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({type:'task_approve',id:+b.dataset.approve}));
   document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>act({type:'task_reject',id:+b.dataset.reject}));
   document.querySelectorAll('[data-assignto]').forEach(b=>b.onclick=()=>{ASSIGN_I=+b.dataset.assignto;render();});
-  const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=DATA.team||[];const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assignee:m.anchor,title,deadline:val('assignDeadline')});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
+  const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=(DATA.team||[]).filter(m=>m.id!=null);const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assigneeId:m.id,title,deadline:val('assignDeadline')});tg.showAlert&&tg.showAlert('Задача назначена ✅');};
   document.querySelectorAll('[data-emp]').forEach(b=>b.onclick=()=>{WORK_EMP=+b.dataset.emp;render();});
-  document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=SEC_DEFAULT[TZ_SEC]||TZ_EXEC;render();});
-  document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=b.dataset.exec;render();});
-  document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{captureTZ();TZ_PROJ=b.dataset.tzp;render();});
+  document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=null;render();});
+  document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=+b.dataset.exec;render();});
+  document.querySelectorAll('[data-tzitem]').forEach(b=>b.onclick=()=>{captureTZ();TZ_ITEM=b.dataset.tzitem?+b.dataset.tzitem:null;render();});
+  document.querySelectorAll('[data-teamrole]').forEach(s=>s.onchange=()=>act({type:'team_set_role',id:+s.dataset.teamrole,role:s.value}));
+  document.querySelectorAll('[data-teamdel]').forEach(b=>b.onclick=()=>{const id=+b.dataset.teamdel;const del=()=>act({type:'team_delete',id});if(tg.showConfirm){tg.showConfirm('Удалить участника из команды?',(ok)=>{if(ok)del();});}else del();});
+  document.querySelectorAll('[data-tzp]').forEach(b=>b.onclick=()=>{captureTZ();TZ_PROJ=b.dataset.tzp;TZ_ITEM=null;render();});
   const send=document.querySelector('[data-tz-send]');
-  if(send) send.onclick=async()=>{captureTZ();const tpl=TZ_TEMPLATES[TZ_SEC]||[];const lines=[];tpl.forEach(([id,label])=>{const v=(TZ_FIELDS[id]||'').trim();if(v)lines.push(label+': '+v);});const text=lines.join('\n');if(!text){tg.showAlert&&tg.showAlert('Заполни хотя бы одно поле');return;}await act({type:'tz',section:TZ_SEC,assignee:TZ_EXEC,projectId:TZ_PROJ||null,text});TZ_FIELDS={};render();tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
+  if(send) send.onclick=async()=>{captureTZ();const tpl=TZ_TEMPLATES[TZ_SEC]||[];const lines=[];tpl.forEach(([id,label])=>{const v=(TZ_FIELDS[id]||'').trim();if(v)lines.push(label+': '+v);});const text=lines.join('\n');if(!text){tg.showAlert&&tg.showAlert('Заполни хотя бы одно поле');return;}await act({type:'tz',section:TZ_SEC,execId:TZ_EXEC,projectId:TZ_PROJ||null,itemId:TZ_ITEM,text});TZ_FIELDS={};render();tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');};
 
   // ---- таблица ----
   document.querySelectorAll('[data-tproj]').forEach(b=>b.onclick=()=>{TBL_PROJ=+b.dataset.tproj;TBL_PLAN=null;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});

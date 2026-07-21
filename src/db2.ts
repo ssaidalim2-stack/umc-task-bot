@@ -1,4 +1,4 @@
-import { supabase, Member, listMembers } from "./db";
+import { supabase, Member, listMembers, memberRole, listAdmins, setMemberRole, deleteMember as dbDeleteMember } from "./db";
 import { PERSON_KEYWORDS } from "./projects";
 
 export interface Project { id: number; key: string; name: string; }
@@ -100,6 +100,21 @@ export async function resolveMember(anchorName: string): Promise<Member | null> 
   return resolveMemberSync(await membersAll(), anchorName);
 }
 
+// ---------- роли команды (явное назначение вместо угадывания по имени) ----------
+export async function membersWithRole(role: string): Promise<Member[]> {
+  if (role === "admin") return listAdmins();
+  return (await membersAll()).filter((m) => memberRole(m) === role);
+}
+export async function setTeamRole(telegramId: number, role: string): Promise<void> {
+  if (role === "admin") await setMemberRole(telegramId, true, null);
+  else await setMemberRole(telegramId, false, role);
+  _membersCache = null;
+}
+export async function removeMember(telegramId: number): Promise<void> {
+  await dbDeleteMember(telegramId);
+  _membersCache = null;
+}
+
 // ---------- tasks (v2) ----------
 export interface TaskRow {
   id: number; title: string; assignee_id: number | null; assignee_name: string | null;
@@ -142,6 +157,10 @@ export async function updateTaskTitle(id: number, title: string): Promise<void> 
 }
 export async function recentDoneTasks(limit = 15): Promise<TaskRow[]> {
   const { data } = await supabase.from("tasks").select("*").eq("status", "done").order("updated_at", { ascending: false }).limit(limit);
+  return (data as TaskRow[]) ?? [];
+}
+export async function openTasksForItem(itemId: number): Promise<TaskRow[]> {
+  const { data } = await supabase.from("tasks").select("*").eq("item_id", itemId).not("status", "in", "(done,cancelled)");
   return (data as TaskRow[]) ?? [];
 }
 export async function getTaskRow(id: number): Promise<TaskRow | null> {

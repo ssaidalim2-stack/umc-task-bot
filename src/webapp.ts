@@ -3,7 +3,7 @@ import { InlineKeyboard } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import { bot } from "./bot";
-import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNERS, nextStage } from "./projects";
+import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNER_ROLES, nextStage } from "./projects";
 import * as meta from "./meta";
 
 // ---------- проверка подписи Telegram WebApp ----------
@@ -29,16 +29,11 @@ const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) =>
 // ---------- роли и вкладки ----------
 export function roleOf(member: db.Member | null, isAdmin: boolean): string {
   if (isAdmin) return "admin";
-  const s = ((member?.specialization || "") + " " + (member?.name || "") + " " + (member?.username || "")).toLowerCase();
-  if (/менедж|manager|smm|бобур|боб|bob/.test(s)) return "manager";
-  if (/монтаж|editor|монтаж[её]р|асрор|asror/.test(s)) return "editor";
-  if (/видеограф|съ[её]м|videograph|video|саманд|saman/.test(s)) return "videographer";
-  if (/дизайн|design|влад|vlad/.test(s)) return "designer";
-  return "member";
+  return db.memberRole(member);
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs"],
+  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team"],
   manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
@@ -46,18 +41,15 @@ const TABS_BY_ROLE: Record<string, string[]> = {
   member: ["home", "tasks"],
 };
 
+// раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
-  video: { label: "Видео", anchor: "Самандар", specialty: "shoot" },
-  design: { label: "Дизайн", anchor: "Владимир", specialty: "design" },
-  edit: { label: "Монтаж", anchor: "Асрор", specialty: "edit" },
+  video: { label: "Видео", roleKey: "videographer", specialty: "shoot" },
+  design: { label: "Дизайн", roleKey: "designer", specialty: "design" },
+  edit: { label: "Монтаж", roleKey: "editor", specialty: "edit" },
 } as const;
 
-const TEAM_ANCHORS = [
-  { anchor: "Бобур", role: "Менеджер" },
-  { anchor: "Самандар", role: "Видеограф" },
-  { anchor: "Асрор", role: "Монтажёр" },
-  { anchor: "Владимир", role: "Дизайнер" },
-];
+const ROLE_LABEL_RU: Record<string, string> = { admin: "Админ", manager: "Менеджер", videographer: "Видеограф", editor: "Монтажёр", designer: "Дизайнер", member: "Сотрудник" };
+const OPERATIONAL_ROLES = ["manager", "videographer", "editor", "designer"];
 
 function isAdminId(member: db.Member | null, id: number) {
   return Boolean(member?.is_admin) || ENV_ADMINS.includes(id);
@@ -78,8 +70,22 @@ export function parseDeadline(s: string | null | undefined): string | null {
   return new Date(localMs - 5 * 3600 * 1000).toISOString(); // UTC+5
 }
 
+// дата съёмки хранится свободным текстом ("16.07 четверг" и т.п.) — берём только дату из начала строки
+export function parseShootDay(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?/);
+  if (!m) return null;
+  const now = new Date(Date.now() + 5 * 3600 * 1000);
+  const d = +m[1], mo = +m[2];
+  let y = m[3] ? +m[3] : now.getUTCFullYear();
+  if (y < 100) y += 2000;
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  if (Number.isNaN(day.getTime())) return null;
+  return day.toISOString().slice(0, 10);
+}
+
 // поля пункта контент-плана храним JSON-ом в content_items.title (без изменения схемы)
-function parseItemData(title: string | null): any {
+export function parseItemData(title: string | null): any {
   try { const d = JSON.parse(title || "{}"); return d && typeof d === "object" ? d : {}; } catch { return title ? { script: title } : {}; }
 }
 // собрать плоский текст сценария из кадров (для обратной совместимости и статистики)
@@ -221,12 +227,21 @@ export async function getData(userId: number) {
   for (const p of projOut) { pub += p.video["published"] || 0; vt += p.videoTotal; gd += p.graphicDone; gt += p.graphicTotal; }
 
   let team: any[] = [];
+  let teamAll: any[] = [];
+  let specialists: Record<string, any[]> = { video: [], design: [], edit: [] };
   if (canConfirm) {
-    for (const t of TEAM_ANCHORS) {
-      const m = d2.resolveMemberSync(members, t.anchor);
-      const tks = m ? memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm") : [];
-      team.push({ anchor: t.anchor, role: t.role, name: m?.name || t.anchor, registered: !!m, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })) });
+    for (const roleKey of OPERATIONAL_ROLES) {
+      const mems = members.filter((m) => db.memberRole(m) === roleKey);
+      if (!mems.length) { team.push({ id: null, role: ROLE_LABEL_RU[roleKey], name: "— вакансия —", registered: false, tasks: [] }); continue; }
+      for (const m of mems) {
+        const tks = memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
+        team.push({ id: m.telegram_id, role: ROLE_LABEL_RU[roleKey], name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })) });
+      }
     }
+    for (const [sec, cfg] of Object.entries(SECTION)) {
+      specialists[sec] = members.filter((m) => db.memberRole(m) === cfg.roleKey).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
+    }
+    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m) }));
   }
 
   let myWork: any[] = [];
@@ -256,7 +271,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, myWork, board, teamTasks, stats, daily, meta: metaOut,
+    confirmable, team, teamAll, specialists, myWork, board, teamTasks, stats, daily, meta: metaOut,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -290,6 +305,7 @@ export async function doAction(userId: number, action: any) {
         break; // не двигаем статус до подтверждения
       }
       await d2.updateItem(item.id, { stage: nx, status: nx === "published" ? "done" : "in_progress" });
+      if (nx === "shoot") await autoCloseTasksForStage(item.id, "shoot");
       await notifyStage(item.project_id, item.idx, nx);
       break;
     }
@@ -340,10 +356,10 @@ export async function doAction(userId: number, action: any) {
     case "task_assign": {
       if (role !== "admin" && role !== "manager") break;
       const title = (action.title || "").trim();
-      if (!title || !action.assignee) break;
-      const ex = await d2.resolveMember(action.assignee);
+      if (!title || !action.assigneeId) break;
+      const ex = await db.getMember(+action.assigneeId);
       const dl = parseDeadline(action.deadline);
-      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: action.assignee, project_id: action.projectId ? +action.projectId : null, deadline: dl });
+      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: ex?.name ?? null, project_id: action.projectId ? +action.projectId : null, item_id: action.itemId ? +action.itemId : null, deadline: dl });
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Тебе назначена задача: ${title}${dlTxt}`); } catch {} }
       break;
@@ -437,6 +453,29 @@ export async function doAction(userId: number, action: any) {
       try { return { day, snap: await meta.pullSnapshot(day) }; }
       catch (e: any) { return { error: String(e.message || e) }; }
     }
+    // ---------- команда: явное назначение ролей ----------
+    case "team_set_role": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const target = +action.id;
+      const newRole = String(action.role || "member");
+      if (target === userId && newRole !== "admin") return { error: "нельзя снять роль админа с самого себя" };
+      await d2.setTeamRole(target, newRole);
+      return getData(userId);
+    }
+    case "team_delete": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const target = +action.id;
+      if (target === userId) return { error: "нельзя удалить самого себя" };
+      await d2.removeMember(target);
+      return getData(userId);
+    }
+    case "plan_active_items": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const plan = await d2.getActivePlan(+action.projectId);
+      if (!plan) return { items: [] };
+      const its = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "video");
+      return { items: its.map((x) => { const d = parseItemData((x as any).title); return { id: x.id, idx: x.idx, theme: d.theme || "" }; }) };
+    }
     case "task_submit_file": {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
@@ -458,12 +497,13 @@ export async function doAction(userId: number, action: any) {
       const sec = (SECTION as any)[action.section];
       const text = (action.text || "").trim();
       if (!sec || !text) break;
-      const execAnchor = action.assignee || sec.anchor; // выбранный исполнитель (Самандар может делать и монтаж)
-      const specialist = await d2.resolveMember(execAnchor);
+      // выбранный исполнитель: явный execId (человек с нужной ролью) — вместо угадывания по имени
+      const specialist = action.execId ? await db.getMember(+action.execId) : (await d2.membersWithRole(sec.roleKey))[0] ?? null;
       const projectId = action.projectId ? +action.projectId : null;
+      const itemId = action.itemId ? +action.itemId : null;
       const proj = projectId ? await d2.getProject(projectId) : null;
       const title = `ТЗ • ${sec.label}${proj ? " • " + proj.name : ""}: ${text.slice(0, 50)}`;
-      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: execAnchor, project_id: projectId });
+      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId });
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
       if (specialist) { try { await bot.api.sendMessage(specialist.telegram_id, msg); } catch {} }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
@@ -484,14 +524,18 @@ export async function doAction(userId: number, action: any) {
     }
     case "item_update": {
       if (role !== "admin" && role !== "manager") return { items: [] };
+      const item0 = await d2.getItem(+action.id);
       const f = action.fields || {};
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptFromFrames || f.script || "", frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const scriptTxt = scriptFromFrames || f.script || "";
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
+      else if (item0 && item0.type === "video" && item0.stage === "idea" && scriptTxt.trim()) patch.stage = "script"; // сценарий заполнен → авто-переход в готовый формат
       await d2.updateItem(+action.id, patch);
+      if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_patch": {
@@ -504,7 +548,9 @@ export async function doAction(userId: number, action: any) {
       const patch: any = { title: JSON.stringify(d) };
       if (p.type) patch.type = p.type;
       if (p.status) { patch.stage = p.status; patch.status = p.status === "published" || p.status === "done" ? "done" : "in_progress"; }
+      else if (it.type === "video" && it.stage === "idea" && "script" in p && String(p.script || "").trim()) patch.stage = "script";
       await d2.updateItem(+action.id, patch);
+      if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_delete": {
@@ -548,18 +594,29 @@ export async function doAction(userId: number, action: any) {
 async function notifyStage(projectId: number, idx: number, stage: string) {
   const proj = await d2.getProject(projectId);
   const msg = `🎬 ${proj?.name} — Видео #${idx}\nЭтап: ${STAGE_LABEL[stage]}\nТвой шаг — приступай.`;
-  for (const anchor of STAGE_OWNERS[stage] || []) {
-    const m = await d2.resolveMember(anchor);
-    if (m) { try { await bot.api.sendMessage(m.telegram_id, msg); } catch {} }
+  const notified = new Set<number>();
+  for (const role of STAGE_OWNER_ROLES[stage] || []) {
+    for (const m of await d2.membersWithRole(role)) {
+      if (notified.has(m.telegram_id)) continue;
+      notified.add(m.telegram_id);
+      try { await bot.api.sendMessage(m.telegram_id, msg); } catch {}
+    }
   }
   for (const b of await d2.bindingsFor(projectId, stage)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
 }
 
+// закрыть задачи, привязанные к пункту плана, когда он дошёл до нужного этапа (напр. видео отмечено «Снято»)
+async function autoCloseTasksForStage(itemId: number, stage: string) {
+  if (stage !== "shoot") return; // пока только съёмочные ТЗ авто-закрываются по факту съёмки
+  const tasks = await d2.openTasksForItem(itemId);
+  for (const t of tasks) {
+    await d2.setTaskStatus(t.id, "done", { confirmed_by: 0 });
+    if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» закрыта автоматически — видео отмечено как «Снято».`); } catch {} }
+  }
+}
+
 async function managerRecipients(): Promise<number[]> {
-  const ids = new Set<number>();
-  const m = await d2.resolveMember("Бобур");
-  if (m) ids.add(m.telegram_id);
-  return [...ids];
+  return (await d2.membersWithRole("manager")).map((m) => m.telegram_id);
 }
 async function adminRecipients(): Promise<number[]> {
   const ids = new Set<number>(ENV_ADMINS);
@@ -569,7 +626,7 @@ async function adminRecipients(): Promise<number[]> {
 
 async function confirmers(): Promise<number[]> {
   const ids = new Set<number>(ENV_ADMINS);
-  for (const anchor of ["Саид", "Бобур"]) { const m = await d2.resolveMember(anchor); if (m) ids.add(m.telegram_id); }
+  for (const m of await d2.membersWithRole("manager")) ids.add(m.telegram_id);
   (await db.listAdmins()).forEach((a) => ids.add(a.telegram_id));
   return [...ids];
 }
