@@ -21,12 +21,6 @@
   header h1{margin:0;font-size:20px;font-weight:700}
   header .sub{color:var(--hint);font-size:13px;margin-top:2px}
   .wrap{padding:8px 12px}
-  /* на iPad/десктопе (широкий вьюпорт) центрируем контент разумной ширины вместо растягивания на весь экран */
-  @media (min-width:720px){
-    header,.wrap{max-width:640px;margin-left:auto;margin-right:auto}
-    .tabbar,.msheet{max-width:640px;left:50%;transform:translateX(-50%)}
-    .tabbar{border-radius:14px 14px 0 0}
-  }
   .card{background:var(--card);border-radius:14px;padding:14px;margin:10px 0}
   .card h3{margin:0 0 8px;font-size:16px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -84,6 +78,13 @@
   .bcount{font-size:12px;color:var(--hint);background:rgba(127,127,127,.2);border-radius:10px;padding:1px 8px}
   .bcard{background:var(--bg);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:13px}
   .rowdl{width:78px;padding:5px 7px;border-radius:8px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);font-size:12px;flex:0 0 auto}
+  /* на iPad/десктопе (широкий вьюпорт) центрируем контент разумной ширины вместо растягивания на весь экран.
+     Блок стоит В КОНЦЕ таблицы стилей намеренно — иначе более поздние базовые правила (например .tabbar{left:0;right:0}) перебивают центрирование по порядку каскада. */
+  @media (min-width:720px){
+    header,.wrap{max-width:640px;margin-left:auto;margin-right:auto}
+    .tabbar{width:640px;margin:0 auto;border-radius:14px 14px 0 0}
+    .msheet{width:640px;margin:0 auto}
+  }
 </style>
 </head>
 <body>
