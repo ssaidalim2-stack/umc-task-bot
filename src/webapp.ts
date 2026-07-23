@@ -108,6 +108,8 @@ function framesToText(frames: any[]): string {
   const out: string[] = [];
   for (const fr of frames || []) {
     if (fr && fr.label) out.push(String(fr.label));
+    if (fr && typeof fr.text === "string" && fr.text.trim()) { out.push(fr.text.trim()); continue; }
+    // старый формат (rows[]) — на случай ещё не мигрированных пунктов
     for (const r of (fr && fr.rows) || []) {
       const role = r && r.r ? `${r.r}: ` : "";
       const t = r && r.t ? String(r.t) : "";
