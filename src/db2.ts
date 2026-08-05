@@ -16,6 +16,46 @@ export async function getProject(id: number): Promise<Project | null> {
   const { data } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
   return (data as Project) ?? null;
 }
+
+// ---------- метаданные проекта (описание, архив) — без ALTER TABLE, в app_settings как и всё остальное ----------
+export interface ProjectMeta { description: string; archived: boolean; }
+async function projectMetaRaw(id: number): Promise<ProjectMeta> {
+  try { const raw = await getSetting(`project_meta:${id}`); return raw ? { description: "", archived: false, ...JSON.parse(raw) } : { description: "", archived: false }; }
+  catch { return { description: "", archived: false }; }
+}
+export async function getProjectsWithMeta(): Promise<(Project & ProjectMeta)[]> {
+  const projects = await getProjects();
+  const metas = await Promise.all(projects.map((p) => projectMetaRaw(p.id)));
+  return projects.map((p, i) => ({ ...p, ...metas[i] }));
+}
+export async function getActiveProjects(): Promise<Project[]> {
+  return (await getProjectsWithMeta()).filter((p) => !p.archived);
+}
+export async function setProjectArchived(id: number, archived: boolean): Promise<void> {
+  const meta = await projectMetaRaw(id);
+  meta.archived = archived;
+  await setSetting(`project_meta:${id}`, JSON.stringify(meta));
+}
+export async function setProjectDescription(id: number, description: string): Promise<void> {
+  const meta = await projectMetaRaw(id);
+  meta.description = description;
+  await setSetting(`project_meta:${id}`, JSON.stringify(meta));
+}
+const CYR_TRANSLIT: Record<string, string> = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" };
+function slugify(name: string): string {
+  const lower = name.toLowerCase();
+  const translit = [...lower].map((c) => CYR_TRANSLIT[c] ?? c).join("");
+  return translit.replace(/[^a-z0-9]+/g, "").slice(0, 24) || "project";
+}
+export async function createProject(name: string, description: string): Promise<Project | null> {
+  const existing = new Set((await getProjects()).map((p) => p.key));
+  const base = slugify(name);
+  let key = base, i = 2;
+  while (existing.has(key)) key = `${base}${i++}`;
+  const { data } = await supabase.from("projects").insert({ key, name }).select("*").single();
+  if (data) await setSetting(`project_meta:${(data as any).id}`, JSON.stringify({ description, archived: false }));
+  return (data as Project) ?? null;
+}
 export async function getAllActivePlans(): Promise<ContentPlan[]> {
   const { data } = await supabase.from("content_plans").select("*").eq("is_active", true);
   return (data as ContentPlan[]) ?? [];

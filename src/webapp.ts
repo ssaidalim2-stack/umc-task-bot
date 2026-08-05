@@ -33,7 +33,7 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team"],
+  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team", "projects"],
   manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
@@ -128,7 +128,7 @@ export async function getData(userId: number) {
   // один «залп» параллельных запросов вместо десятков последовательных
   const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10); // Asia/Tashkent
   const [member0, projects, plans, items, members, openTasks, subs, doneTasks, dailyTpl, dailyDone, dailyTotal] = await Promise.all([
-    db.getMember(userId), d2.getProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(), d2.recentDoneTasks(15),
+    db.getMember(userId), d2.getActiveProjects(), d2.getAllPlans(), d2.getAllItems(), db.listMembers(), d2.listOpenTasks(), d2.listSubscriptions(), d2.recentDoneTasks(15),
     d2.listDailyTemplates(), d2.dailyDoneToday(userId, today), d2.dailyAllTime(userId),
   ]);
   let member = member0;
@@ -260,6 +260,7 @@ export async function getData(userId: number) {
     }
     teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m) }));
   }
+  const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
   let myWork: any[] = [];
   if (role === "videographer" || role === "editor" || role === "designer") {
@@ -288,7 +289,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, teamAll, specialists, myWork, board, teamTasks, stats, daily, meta: metaOut,
+    confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -442,7 +443,7 @@ export async function doAction(userId: number, action: any) {
     case "analytics_compare": {
       if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
       const map = await meta.getMetaMap();
-      const projects = await d2.getProjects();
+      const projects = await d2.getActiveProjects();
       const rows: any[] = [];
       await Promise.all(projects.map(async (p) => {
         const b = map[p.key] || {};
@@ -484,6 +485,30 @@ export async function doAction(userId: number, action: any) {
       const target = +action.id;
       if (target === userId) return { error: "нельзя удалить самого себя" };
       await d2.removeMember(target);
+      return getData(userId);
+    }
+    // ---------- проекты: создание с описанием + архив ----------
+    case "project_create": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const name = (action.name || "").trim();
+      if (!name) return { error: "укажи название проекта" };
+      const proj = await d2.createProject(name, (action.description || "").trim());
+      if (!proj) return { error: "не удалось создать проект" };
+      return getData(userId);
+    }
+    case "project_archive": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await d2.setProjectArchived(+action.id, true);
+      return getData(userId);
+    }
+    case "project_unarchive": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await d2.setProjectArchived(+action.id, false);
+      return getData(userId);
+    }
+    case "project_set_desc": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await d2.setProjectDescription(+action.id, String(action.description || "").trim());
       return getData(userId);
     }
     case "plan_active_items": {
