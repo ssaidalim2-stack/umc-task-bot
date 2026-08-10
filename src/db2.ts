@@ -155,6 +155,30 @@ export async function removeMember(telegramId: number): Promise<void> {
   _membersCache = null;
 }
 
+// ---------- точечные права доступа к разделам (переопределяют набор по роли) ----------
+export async function getMemberTabs(telegramId: number): Promise<string[] | null> {
+  try {
+    const raw = await getSetting(`member_perms:${telegramId}`);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return Array.isArray(j.tabs) && j.tabs.length ? j.tabs : null;
+  } catch { return null; }
+}
+export async function setMemberTabs(telegramId: number, tabs: string[] | null): Promise<void> {
+  await setSetting(`member_perms:${telegramId}`, JSON.stringify({ tabs: tabs || [] }));
+}
+export async function getMemberTabsBulk(ids: number[]): Promise<Record<number, string[]>> {
+  if (!ids.length) return {};
+  const keys = ids.map((id) => `member_perms:${id}`);
+  const { data } = await supabase.from("app_settings").select("key,value").in("key", keys);
+  const out: Record<number, string[]> = {};
+  for (const r of (data as any[]) ?? []) {
+    const id = +String(r.key).split(":")[1];
+    try { const j = JSON.parse(r.value); if (Array.isArray(j.tabs) && j.tabs.length) out[id] = j.tabs; } catch {}
+  }
+  return out;
+}
+
 // ---------- tasks (v2) ----------
 export interface TaskRow {
   id: number; title: string; assignee_id: number | null; assignee_name: string | null;

@@ -40,6 +40,7 @@ const TABS_BY_ROLE: Record<string, string[]> = {
   designer: ["home", "mywork", "tasks"],
   member: ["home", "tasks"],
 };
+const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -135,7 +136,8 @@ export async function getData(userId: number) {
   if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
   const isAdmin = isAdminId(member, userId);
   const role = roleOf(member, isAdmin);
-  const tabs = TABS_BY_ROLE[role] || ["tasks"];
+  const customTabs = await d2.getMemberTabs(userId);
+  const tabs = customTabs ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))])) : (TABS_BY_ROLE[role] || ["tasks"]);
 
   const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
   const plansByProject = new Map<number, any[]>();
@@ -269,7 +271,8 @@ export async function getData(userId: number) {
     for (const [sec, cfg] of Object.entries(SECTION)) {
       specialists[sec] = members.filter((m) => db.memberRole(m) === cfg.roleKey).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
     }
-    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m) }));
+    const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
+    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), tabs: customTabsBulk[m.telegram_id] || null }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
@@ -503,6 +506,13 @@ export async function doAction(userId: number, action: any) {
       const target = +action.id;
       if (target === userId) return { error: "нельзя удалить самого себя" };
       await d2.removeMember(target);
+      return getData(userId);
+    }
+    case "team_set_tabs": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const target = +action.id;
+      const list = Array.isArray(action.tabs) ? action.tabs.filter((t: any) => ALL_TABS.includes(t)) : null;
+      await d2.setMemberTabs(target, list && list.length ? list : null);
       return getData(userId);
     }
     // ---------- проекты: создание с описанием + архив ----------
