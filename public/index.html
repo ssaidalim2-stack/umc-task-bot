@@ -616,6 +616,18 @@ function renderWork(){
   const chips=team.map((m,i)=>`<div class="pill ${i==WORK_EMP?'active':''}" data-emp="${i}">${esc(m.name)}</div>`).join('');
   const m=team[WORK_EMP];
   if(!m) return '<div class="empty">Нет сотрудников</div>';
+  let statsBlock='';
+  if(m.stats){
+    const s=m.stats;
+    const onTimePct=s.done?Math.round(s.onTime/s.done*100):0;
+    statsBlock=`<div class="card">
+      <div class="muted" style="font-weight:600;margin-bottom:6px">📊 Статистика</div>
+      <div class="row"><span class="muted">Закрыто задач</span><b>${s.done} из ${s.total}</b></div>
+      <div class="row"><span class="muted">Вовремя / с опозданием</span><b>${s.onTime} / ${s.late}</b></div>
+      ${bar(s.onTime,s.onTime+s.late)}
+      <div class="row" style="margin-top:4px"><span class="muted">Открытых сейчас</span><b>${s.open}</b></div>
+    </div>`;
+  }
   let body=`<div class="card"><div class="row"><h3>${esc(m.name)}</h3><span class="badge">${m.role}</span></div>`;
   if(!m.registered) body+='<div class="muted">Ещё не заходил в бота (/start)</div>';
   if(!m.tasks.length) body+='<div class="muted">Активных задач нет</div>';
@@ -623,10 +635,11 @@ function renderWork(){
     const pend=['await_manager','await_admin','await_confirm'].includes(t.status);
     const st=pend?'<span class="badge">на утв.</span>':'';
     const btn=pend?`<button class="btn sm" data-approve="${t.id}">✅</button>`:'';
-    return `<div class="vid"><span>${esc(t.title)} ${st}</span>${btn}</div>`;
+    const del=DATA.user.role==='admin'?`<button class="xbtn" data-taskdel="${t.id}" title="Удалить задачу">🗑</button>`:'';
+    return `<div class="vid"><span>${esc(t.title)} ${st}</span><div style="display:flex;gap:6px">${btn}${del}</div></div>`;
   }).join('');
   body+='</div>';
-  return `<div class="pills">${chips}</div>${body}`;
+  return `<div class="pills">${chips}</div>${statsBlock}${body}`;
 }
 
 function renderTZ(){
@@ -719,6 +732,7 @@ function bind(){
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=async()=>{await act({type:'task_submit_file',id:+b.dataset.file});tg.showAlert&&tg.showAlert('Открой чат с ботом и пришли файл готовой работы 📎');});
   document.querySelectorAll('[data-confirm]').forEach(b=>b.onclick=()=>act({type:'task_confirm',id:+b.dataset.confirm}));
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({type:'task_approve',id:+b.dataset.approve}));
+  document.querySelectorAll('[data-taskdel]').forEach(b=>b.onclick=()=>{const id=+b.dataset.taskdel;const del=()=>act({type:'task_delete',id});if(tg.showConfirm){tg.showConfirm('Удалить эту задачу?',(ok)=>{if(ok)del();});}else del();});
   document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>act({type:'task_reject',id:+b.dataset.reject}));
   document.querySelectorAll('[data-assignto]').forEach(b=>b.onclick=()=>{ASSIGN_I=+b.dataset.assignto;render();});
   const asend=document.querySelector('[data-assign-send]'); if(asend) asend.onclick=async()=>{const team=(DATA.team||[]).filter(m=>m.id!=null);const m=team[ASSIGN_I];const title=(val('assignTitle')||'').trim();if(!m){tg.showAlert&&tg.showAlert('Выбери исполнителя');return;}if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;}await act({type:'task_assign',assigneeId:m.id,title,deadline:val('assignDeadline')});tg.showAlert&&tg.showAlert('Задача назначена ✅');};

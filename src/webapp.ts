@@ -247,12 +247,23 @@ export async function getData(userId: number) {
   let teamAll: any[] = [];
   let specialists: Record<string, any[]> = { video: [], design: [], edit: [] };
   if (canConfirm) {
+    const allTasks = await d2.allTasksBulk();
+    const statsFor = (telegramId: number) => {
+      const mine = allTasks.filter((t) => t.assignee_id === telegramId);
+      const done = mine.filter((t) => t.status === "done");
+      let onTime = 0, late = 0;
+      for (const t of done) {
+        if (!t.deadline || !t.updated_at) continue;
+        if (new Date(t.updated_at).getTime() <= new Date(t.deadline).getTime()) onTime++; else late++;
+      }
+      return { total: mine.length, done: done.length, open: mine.length - done.length, onTime, late };
+    };
     for (const roleKey of OPERATIONAL_ROLES) {
       const mems = members.filter((m) => db.memberRole(m) === roleKey);
-      if (!mems.length) { team.push({ id: null, role: ROLE_LABEL_RU[roleKey], name: "— вакансия —", registered: false, tasks: [] }); continue; }
+      if (!mems.length) { team.push({ id: null, role: ROLE_LABEL_RU[roleKey], name: "— вакансия —", registered: false, tasks: [], stats: null }); continue; }
       for (const m of mems) {
         const tks = memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
-        team.push({ id: m.telegram_id, role: ROLE_LABEL_RU[roleKey], name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })) });
+        team.push({ id: m.telegram_id, role: ROLE_LABEL_RU[roleKey], name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })), stats: statsFor(m.telegram_id) });
       }
     }
     for (const [sec, cfg] of Object.entries(SECTION)) {
@@ -370,6 +381,13 @@ export async function doAction(userId: number, action: any) {
       await d2.setTaskStatus(t.id, "in_progress");
       if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `↩️ Задачу «${t.title}» вернули на доработку.`); } catch {} }
       break;
+    }
+    case "task_delete": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const t = await d2.getTaskRow(+action.id);
+      if (t?.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `🗑 Задачу «${t.title}» удалил админ.`); } catch {} }
+      await d2.deleteTask(+action.id);
+      return getData(userId);
     }
     case "task_assign": {
       if (role !== "admin" && role !== "manager") break;

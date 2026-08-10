@@ -160,10 +160,15 @@ export interface TaskRow {
   id: number; title: string; assignee_id: number | null; assignee_name: string | null;
   creator_id: number; project_id: number | null; deadline: string | null; priority: string;
   status: string; kind: string; recurrence: string | null; needs_confirmation: boolean;
-  confirmed_by: number | null; item_id: number | null;
+  confirmed_by: number | null; item_id: number | null; updated_at?: string; created_at?: string;
 }
 export async function listOpenTasks(): Promise<TaskRow[]> {
   const { data } = await supabase.from("tasks").select("*").not("status", "in", "(done,cancelled)").neq("kind", "daily").order("id");
+  return (data as TaskRow[]) ?? [];
+}
+// все задачи (открытые + закрытые), кроме ежедневных — для статистики по сотруднику (соблюдение дедлайнов, закрытые задачи)
+export async function allTasksBulk(): Promise<TaskRow[]> {
+  const { data } = await supabase.from("tasks").select("*").neq("kind", "daily").order("id");
   return (data as TaskRow[]) ?? [];
 }
 
