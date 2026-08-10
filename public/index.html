@@ -252,8 +252,11 @@ function renderTable(){
   if(!p) return '<div class="empty">Нет проектов</div>';
   const plans=p.plans||[];
   if(!TBL_PLAN || !plans.some(pl=>pl.id==TBL_PLAN)) TBL_PLAN=(plans.find(pl=>pl.is_active)||plans[0])?.id||null;
-  // ленивая подгрузка пунктов при смене периода
-  if(TBL_PLAN && TBL_LOADED!==TBL_PLAN){ TBL_LOADED=TBL_PLAN; TBL_ITEMS=null; setTimeout(()=>act({type:'plan_items',planId:TBL_PLAN}),0); }
+  // ленивая подгрузка пунктов при смене периода (и сброс, если у проекта вообще нет периода — иначе виснут пункты чужого проекта)
+  if(TBL_LOADED!==TBL_PLAN){
+    TBL_LOADED=TBL_PLAN; TBL_ITEMS=TBL_PLAN?null:[];
+    if(TBL_PLAN) setTimeout(()=>act({type:'plan_items',planId:TBL_PLAN}),0);
+  }
 
   if(TBL_OPEN) return renderItemDetail();
 
