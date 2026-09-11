@@ -139,7 +139,7 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "" };
 }
 
 // ---------- сбор данных ----------
@@ -594,15 +594,28 @@ export async function doAction(userId: number, action: any) {
       const dl = action.deadline ? parseFlexibleDeadline(String(action.deadline)) : null;
       await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId, deadline: dl });
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
-      let aiBlock = "";
-      if (sec.roleKey === "editor" && action.aiScript && aiConfigured()) {
-        try { aiBlock = `\n\n🎬 Монтажная раскадровка (AI):\n${await generateTz(String(action.aiScript))}`; } catch { /* не роняем отправку ТЗ, если AI недоступен */ }
-      }
-      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}${aiBlock}`;
+      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}`;
       const photoBuf = parseDataUrlImage(action.photo);
       if (specialist) { try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {} }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await sendTzMessage(b.chat_id, msg, photoBuf); } catch {} }
       break;
+    }
+    // AI-раскадровка монтажа: генерируется по кнопке в карточке и остаётся в самом пункте
+    // (копируется вручную) — пока монтажёр не подключён к боту как получатель сообщений.
+    case "item_ai_tz": {
+      if (role !== "admin" && role !== "manager") return { items: [] };
+      const items0 = await d2.listItemsByPlan(+action.planId);
+      if (!aiConfigured()) return { items: items0.map(serializeItem), error: "AI не настроен: нет GEMINI_API_KEY" };
+      const it = await d2.getItem(+action.id);
+      const script = String(action.script || "").trim();
+      if (!it || !script) return { items: items0.map(serializeItem) };
+      let aiText = "";
+      try { aiText = await generateTz(script); }
+      catch (e: any) { return { items: items0.map(serializeItem), error: `Ошибка AI: ${e?.message || e}` }; }
+      const d = parseItemData((it as any).title);
+      d.ai_tz = aiText;
+      await d2.updateItem(+action.id, { title: JSON.stringify(d) });
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
 
     // ---- редактируемая таблица контент-плана ----
@@ -624,7 +637,8 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "" };
+      const prevAiTz = item0 ? parseItemData((item0 as any).title).ai_tz || "" : "";
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "", ai_tz: prevAiTz };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }

@@ -368,6 +368,9 @@ function renderItemDetail(){
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
+    ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 Сгенерировать раскадровку монтажа (AI)</button>
+    ${it.ai_tz?`<div class="row" style="margin-top:8px"><div class="muted">Раскадровка монтажа (AI):</div><button class="xbtn" data-aicopy>📋 Копировать</button></div>
+    <textarea readonly style="min-height:220px;font-size:12.5px">${esc(it.ai_tz)}</textarea>`:''}`:''}
     <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:''}
   </div>`;
 }
@@ -844,12 +847,27 @@ function bind(){
     if(reference.trim()) lines.push(`Референс: ${reference}`);
     if(props.trim()) lines.push(`Реквизиты: ${props}`);
     const section=it.type==='video'?'edit':'design';
-    const btn=document.querySelector('[data-tzsend]');
-    const prevTxt=btn?btn.textContent:'';
-    if(btn&&it.type==='video'){btn.textContent='⏳ Генерирую раскадровку (AI)…';btn.disabled=true;}
-    await act({type:'tz',section,execId:null,projectId:TBL_PROJ,itemId:it.id,deadline,text:lines.join('\n'),aiScript:it.type==='video'?script:''});
-    if(btn){btn.textContent=prevTxt;btn.disabled=false;}
+    await act({type:'tz',section,execId:null,projectId:TBL_PROJ,itemId:it.id,deadline,text:lines.join('\n')});
     tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');
+  };
+  const airaska=document.querySelector('[data-airaska]'); if(airaska) airaska.onclick=async()=>{
+    const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
+    captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
+    const script=it.script||'';
+    if(!script.trim()){tg.showAlert&&tg.showAlert('Сначала заполни сценарий');return;}
+    const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script,frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:it.type==='video'?val('f_shoot'):'',deadline:val('f_deadline')};
+    await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
+    const prevTxt=airaska.textContent; airaska.textContent='⏳ Генерирую раскадровку…'; airaska.disabled=true;
+    const res=await api('POST',{type:'item_ai_tz',id:it.id,planId:TBL_PLAN,script});
+    airaska.textContent=prevTxt; airaska.disabled=false;
+    if(res&&res.items)TBL_ITEMS=res.items;
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);} else {tg.showAlert&&tg.showAlert('Раскадровка готова ✅');}
+    render();
+  };
+  const aicopy=document.querySelector('[data-aicopy]'); if(aicopy) aicopy.onclick=async()=>{
+    const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it||!it.ai_tz) return;
+    const ok=await copyText(it.ai_tz); haptic();
+    tg.showAlert&&tg.showAlert(ok?'Скопировано в буфер ✅':'Не удалось скопировать');
   };
   // ---- редактор сценария по кадрам ----
   const _ci=()=>TBL_ITEMS.find(x=>x.id==TBL_OPEN);
