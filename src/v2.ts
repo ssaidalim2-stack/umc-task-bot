@@ -22,7 +22,7 @@ async function nav(ctx: any, v: { text: string; kb: InlineKeyboard }) {
 }
 
 async function projectsKeyboard(prefix: string): Promise<InlineKeyboard> {
-  const projects = await d2.getProjects();
+  const projects = await d2.getActiveProjects();
   const kb = new InlineKeyboard();
   for (const p of projects) kb.text(p.name, `${prefix}:${p.id}`).row();
   return kb;

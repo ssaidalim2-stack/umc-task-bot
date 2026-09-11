@@ -14,25 +14,30 @@
     --btn: var(--tg-theme-button-color, #2ea6ff);
     --btn-text: var(--tg-theme-button-text-color, #fff);
     --accent:#22c55e;
+    --accent2:#8b5cf6;
+    --shadow: 0 2px 10px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --line: rgba(127,127,127,.16);
   }
+  @media (prefers-color-scheme: dark){ :root{ --shadow: 0 2px 14px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3); --line: rgba(255,255,255,.09); } }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:74px;font-size:15px}
-  header{padding:14px 16px 6px}
-  header h1{margin:0;font-size:20px;font-weight:700}
-  header .sub{color:var(--hint);font-size:13px;margin-top:2px}
+  body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:74px;font-size:15px;-webkit-font-smoothing:antialiased}
+  header{padding:16px 16px 8px}
+  header h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.2px}
+  header .sub{color:var(--hint);font-size:13px;margin-top:3px;font-weight:500}
   .wrap{padding:8px 12px}
-  .card{background:var(--card);border-radius:14px;padding:14px;margin:10px 0}
-  .card h3{margin:0 0 8px;font-size:16px}
+  .card{background:var(--card);border-radius:16px;padding:15px;margin:10px 0;box-shadow:var(--shadow);border:1px solid var(--line)}
+  .card h3{margin:0 0 10px;font-size:16px;font-weight:700;letter-spacing:-.1px;display:flex;align-items:center;gap:2px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .muted{color:var(--hint);font-size:13px}
-  .bar{height:8px;border-radius:6px;background:rgba(127,127,127,.25);overflow:hidden;margin:6px 0}
-  .bar > i{display:block;height:100%;background:var(--accent);border-radius:6px}
-  .chip{display:inline-block;padding:3px 9px;border-radius:20px;background:rgba(127,127,127,.18);font-size:12px;margin:2px 4px 2px 0}
-  .btn{appearance:none;border:0;border-radius:10px;background:var(--btn);color:var(--btn-text);padding:9px 12px;font-size:14px;font-weight:600;cursor:pointer}
-  .btn.sec{background:rgba(127,127,127,.18);color:var(--text)}
+  .bar{height:9px;border-radius:6px;background:rgba(127,127,127,.18);overflow:hidden;margin:7px 0}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#4ade80);border-radius:6px;transition:width .4s ease}
+  .chip{display:inline-block;padding:3px 9px;border-radius:20px;background:rgba(127,127,127,.16);font-size:12px;margin:2px 4px 2px 0;font-weight:600}
+  .btn{appearance:none;border:0;border-radius:11px;background:var(--btn);color:var(--btn-text);padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px color-mix(in srgb, var(--btn) 45%, transparent);transition:transform .1s ease,opacity .15s ease}
+  .btn:active{transform:scale(.97);opacity:.9}
+  .btn.sec{background:rgba(127,127,127,.14);color:var(--text);box-shadow:none}
   .btn.full{width:100%;margin-top:8px}
-  .btn.sm{padding:6px 10px;font-size:13px}
-  .btn.xs{padding:5px 9px;font-size:12px;border-radius:8px}
+  .btn.sm{padding:7px 11px;font-size:13px}
+  .btn.xs{padding:5px 9px;font-size:12px;border-radius:9px}
   .framewrap{margin:2px 0 6px}
   .frame{border:1px solid rgba(127,127,127,.28);border-radius:12px;padding:9px;margin-bottom:8px;background:var(--bg)}
   .fhead{display:flex;align-items:center;gap:6px;margin-bottom:7px}
@@ -43,41 +48,45 @@
   .rta{flex:1;min-height:44px;font-size:14px;padding:8px}
   .frowbtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
   .xbtn{appearance:none;border:1px solid rgba(127,127,127,.3);background:rgba(127,127,127,.12);color:var(--text);border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;line-height:1}
-  .vid{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(127,127,127,.15);gap:8px}
+  .vid{display:flex;align-items:center;justify-content:space-between;padding:11px 4px;margin:0 -4px;border-bottom:1px solid var(--line);gap:8px;border-radius:8px;transition:background .12s ease}
   .vid:last-child{border-bottom:0}
-  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid rgba(127,127,127,.2)}
-  .tabbar button{flex:1 1 0;min-width:0;background:none;border:0;color:var(--hint);padding:8px 4px 10px;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .msheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
-  .msheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--bg);border-radius:18px 18px 0 0;padding:14px 14px calc(58px + env(safe-area-inset-bottom));box-shadow:0 -6px 30px rgba(0,0,0,.35)}
-  .msheet-title{font-size:14px;font-weight:700;margin-bottom:10px}
+  .vid[data-topen]{cursor:pointer}
+  .vid[data-topen]:active{background:rgba(127,127,127,.08)}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -4px 16px rgba(0,0,0,.06)}
+  .tabbar button{flex:1 1 0;min-width:0;background:none;border:0;color:var(--hint);padding:9px 4px 10px;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;transition:color .15s ease}
+  .msheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;backdrop-filter:blur(2px)}
+  .msheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--bg);border-radius:20px 20px 0 0;padding:16px 14px calc(58px + env(safe-area-inset-bottom));box-shadow:0 -8px 36px rgba(0,0,0,.35)}
+  .msheet-title{font-size:15px;font-weight:800;margin-bottom:12px}
   .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-  .mcell{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 4px;border-radius:12px;background:var(--card);font-size:11px;cursor:pointer;text-align:center}
-  .mcell span{font-size:22px}
+  .mcell{display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 4px;border-radius:14px;background:var(--card);font-size:11px;font-weight:600;cursor:pointer;text-align:center;border:1px solid var(--line);transition:transform .1s ease}
+  .mcell:active{transform:scale(.95)}
+  .mcell span{font-size:23px}
   .mcell.active{outline:2px solid var(--btn);color:var(--btn)}
   .tabbar button.active{color:var(--btn)}
-  .tabbar .ic{display:block;font-size:20px;margin-bottom:2px}
+  .tabbar .ic{display:block;font-size:21px;margin-bottom:2px}
   .pills{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px}
-  .pill{white-space:nowrap;padding:7px 12px;border-radius:20px;background:var(--card);font-size:13px;cursor:pointer;border:1px solid transparent}
-  .pill.active{background:var(--btn);color:var(--btn-text)}
+  .pill{white-space:nowrap;padding:7px 13px;border-radius:20px;background:var(--card);font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--line);transition:transform .1s ease,box-shadow .15s ease}
+  .pill:active{transform:scale(.96)}
+  .pill.active{background:var(--btn);color:var(--btn-text);border-color:transparent;box-shadow:0 2px 8px color-mix(in srgb, var(--btn) 40%, transparent)}
   a{color:var(--btn)}
-  .empty{text-align:center;color:var(--hint);padding:30px 10px}
+  .empty{text-align:center;color:var(--hint);padding:36px 16px;font-size:14px}
   .stageline{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
-  .seg{flex:1;min-width:54px;text-align:center;font-size:11px;padding:5px 2px;border-radius:8px;background:rgba(127,127,127,.15)}
-  .seg.on{background:var(--accent);color:#062}
-  textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);padding:10px;font-size:15px;font-family:inherit;resize:vertical}
-  input{width:100%;border-radius:12px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);padding:9px 10px;font-size:15px;font-family:inherit}
-  .vid[data-topen]{cursor:pointer}
-  .badge{font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(127,127,127,.2)}
+  .seg{flex:1;min-width:54px;text-align:center;font-size:11px;font-weight:600;padding:6px 2px;border-radius:8px;background:rgba(127,127,127,.13)}
+  .seg.on{background:linear-gradient(135deg,var(--accent),#16a34a);color:#fff}
+  textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:10px;font-size:15px;font-family:inherit;resize:vertical;transition:border-color .15s ease}
+  input{width:100%;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:9px 10px;font-size:15px;font-family:inherit;transition:border-color .15s ease}
+  textarea:focus,input:focus{outline:none;border-color:var(--btn)}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:rgba(127,127,127,.16)}
   .ctab{width:100%;border-collapse:collapse;font-size:13px}
-  .ctab th,.ctab td{padding:7px 4px;text-align:center;border-bottom:1px solid rgba(127,127,127,.15);white-space:nowrap}
-  .ctab th{color:var(--hint);font-weight:600}
-  .ctab td:first-child,.ctab th:first-child{text-align:left;position:sticky;left:0;background:var(--card)}
+  .ctab th,.ctab td{padding:8px 5px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+  .ctab th{color:var(--hint);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+  .ctab td:first-child,.ctab th:first-child{text-align:left;position:sticky;left:0;background:var(--card);font-weight:600}
   .board{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 10px}
-  .bcol{flex:0 0 80%;max-width:300px;background:var(--card);border-radius:12px;padding:10px}
-  .bhead{font-weight:700;font-size:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
-  .bcount{font-size:12px;color:var(--hint);background:rgba(127,127,127,.2);border-radius:10px;padding:1px 8px}
-  .bcard{background:var(--bg);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:13px}
-  .rowdl{width:78px;padding:5px 7px;border-radius:8px;border:1px solid rgba(127,127,127,.3);background:var(--bg);color:var(--text);font-size:12px;flex:0 0 auto}
+  .bcol{flex:0 0 80%;max-width:300px;background:var(--card);border-radius:14px;padding:11px;box-shadow:var(--shadow);border:1px solid var(--line)}
+  .bhead{font-weight:800;font-size:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .bcount{font-size:12px;font-weight:700;color:var(--hint);background:rgba(127,127,127,.18);border-radius:10px;padding:1px 8px}
+  .bcard{background:var(--bg);border-radius:11px;padding:9px 11px;margin-bottom:6px;font-size:13px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .rowdl{width:78px;padding:5px 7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:12px;flex:0 0 auto}
   /* на iPad/десктопе (широкий вьюпорт) центрируем контент разумной ширины вместо растягивания на весь экран.
      Блок стоит В КОНЦЕ таблицы стилей намеренно — иначе более поздние базовые правила (например .tabbar{left:0;right:0}) перебивают центрирование по порядку каскада. */
   @media (min-width:720px){

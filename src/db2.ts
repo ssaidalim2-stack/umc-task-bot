@@ -105,8 +105,11 @@ export async function setSheetUrl(projectId: number, url: string): Promise<void>
 }
 
 // ---------- content items ----------
+// только пункты ТЕКУЩЕГО активного периода — иначе статистика/меню суммируют все периоды разом
 export async function listItems(projectId: number, type: string): Promise<ContentItem[]> {
-  const { data } = await supabase.from("content_items").select("*").eq("project_id", projectId).eq("type", type).order("idx");
+  const plan = await getActivePlan(projectId);
+  if (!plan) return [];
+  const { data } = await supabase.from("content_items").select("*").eq("plan_id", plan.id).eq("type", type).order("idx");
   return (data as ContentItem[]) ?? [];
 }
 export async function getItem(id: number): Promise<ContentItem | null> {

@@ -7,6 +7,7 @@ import { metaConfigured, pullSnapshot } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
+const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
 const HOUR = 60 * 60 * 1000;
 const TZ_OFFSET = 5 * HOUR; // Asia/Tashkent
 
@@ -15,6 +16,8 @@ function langOf(m: db.Member | null): Lang {
 }
 
 export async function runReminders(): Promise<{ checked: number; sent: number }> {
+  // общий выключатель — админ временно ставит все авто-уведомления на паузу, пока не пересоберёт список того, что нужно слать
+  if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
   let sent = 0;
   const now = Date.now();
   const local = new Date(now + TZ_OFFSET);
@@ -154,7 +157,8 @@ async function shootReminders(day: string): Promise<number> {
     const when = daysUntil === 0 ? "СЕГОДНЯ" : "через 2 дня";
     const theme = data.theme ? ` — ${data.theme}` : "";
     const msg = `🎥 Съёмка ${when}!\n${proj?.name || ""} Видео #${it.idx}${theme}\nДата: ${data.shoot_date}`;
-    const recips = new Set<number>();
+    const recips = new Set<number>(ENV_ADMINS);
+    for (const a of await db.listAdmins()) recips.add(a.telegram_id);
     for (const m of await d2.membersWithRole("videographer")) recips.add(m.telegram_id);
     for (const m of await d2.membersWithRole("manager")) recips.add(m.telegram_id);
     for (const cid of recips) { try { await bot.api.sendMessage(cid, msg); sent++; } catch {} }

@@ -15,7 +15,7 @@ export function mainMenu(): InlineKeyboard {
 
 // ---------- контент-план: список проектов ----------
 export async function contentPlanMenu(): Promise<{ text: string; kb: InlineKeyboard }> {
-  const projects = await d2.getProjects();
+  const projects = await d2.getActiveProjects();
   const kb = new InlineKeyboard();
   for (const p of projects) {
     const plan = await d2.getActivePlan(p.id);
@@ -81,7 +81,7 @@ export async function videoCard(itemId: number): Promise<{ text: string; kb: Inl
 
 // ---------- сводный отчёт ----------
 export async function buildReport(title: string): Promise<{ text: string; chartUrl: string }> {
-  const projects = await d2.getProjects();
+  const projects = await d2.getActiveProjects();
   const lines = [`📊 *${title}*`, ""];
   let pubTotal = 0, vidTotal = 0, gfxDone = 0, gfxTotal = 0;
   const labels: string[] = [], pubData: number[] = [], totData: number[] = [];
