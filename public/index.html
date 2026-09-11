@@ -844,7 +844,11 @@ function bind(){
     if(reference.trim()) lines.push(`Референс: ${reference}`);
     if(props.trim()) lines.push(`Реквизиты: ${props}`);
     const section=it.type==='video'?'video':'design';
-    await act({type:'tz',section,execId:null,projectId:TBL_PROJ,itemId:it.id,deadline,text:lines.join('\n')});
+    const btn=document.querySelector('[data-tzsend]');
+    const prevTxt=btn?btn.textContent:'';
+    if(btn&&it.type==='video'){btn.textContent='⏳ Генерирую раскадровку (AI)…';btn.disabled=true;}
+    await act({type:'tz',section,execId:null,projectId:TBL_PROJ,itemId:it.id,deadline,text:lines.join('\n'),aiScript:it.type==='video'?script:''});
+    if(btn){btn.textContent=prevTxt;btn.disabled=false;}
     tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');
   };
   // ---- редактор сценария по кадрам ----

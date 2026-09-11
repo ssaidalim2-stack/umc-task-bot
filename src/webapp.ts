@@ -5,6 +5,7 @@ import * as d2 from "./db2";
 import { bot } from "./bot";
 import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNER_ROLES, nextStage } from "./projects";
 import * as meta from "./meta";
+import { aiConfigured, generateTz } from "./ai";
 
 // ---------- проверка подписи Telegram WebApp ----------
 export function validateInitData(initData: string): { ok: boolean; user?: any } {
@@ -593,7 +594,11 @@ export async function doAction(userId: number, action: any) {
       const dl = action.deadline ? parseFlexibleDeadline(String(action.deadline)) : null;
       await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId, deadline: dl });
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
-      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}`;
+      let aiBlock = "";
+      if (sec.roleKey === "videographer" && action.aiScript && aiConfigured()) {
+        try { aiBlock = `\n\n🎬 Монтажная раскадровка (AI):\n${await generateTz(String(action.aiScript))}`; } catch { /* не роняем отправку ТЗ, если AI недоступен */ }
+      }
+      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}${aiBlock}`;
       const photoBuf = parseDataUrlImage(action.photo);
       if (specialist) { try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {} }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await sendTzMessage(b.chat_id, msg, photoBuf); } catch {} }
