@@ -345,6 +345,30 @@ function renderFrames(it){
       <button class="btn xs" data-fnew="cta">＋ CTA</button>
     </div>`:''}</div>`;
 }
+// разбор markdown-таблицы, которую возвращает AI (docs/tz-algorithm.md, раздел 7/8),
+// в читаемые карточки по блокам — сырая таблица в чате телефона нечитаема
+function parseAiTz(raw){
+  const lines=String(raw||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  const headLine=lines.find(l=>/^Стиль/i.test(l))||'';
+  const rowLines=lines.filter(l=>l.startsWith('|')&&l.endsWith('|'));
+  if(rowLines.length<2) return null;
+  const splitRow=l=>l.slice(1,-1).split('|').map(c=>c.trim());
+  const cols=splitRow(rowLines[0]);
+  const data=rowLines.slice(1).filter(l=>!/^\|?[\s:|-]+\|?$/.test(l)).map(splitRow);
+  if(!data.length) return null;
+  return {head:headLine,cols,data};
+}
+function cellHtml(v){ return esc(v||'').replace(/&lt;br&gt;/gi,'<br>').replace(/&lt;br\/&gt;/gi,'<br>'); }
+function renderAiTzBlock(it){
+  if(!it.ai_tz) return '';
+  const parsed=parseAiTz(it.ai_tz);
+  const body=(parsed&&parsed.data.length)
+    ? parsed.data.map((row,ri)=>`<div class="card" style="margin-top:6px;padding:10px 12px">
+        ${parsed.cols.map((c,ci)=>row[ci]?`<div style="margin-bottom:5px"><span class="muted" style="font-size:11px">${esc(c)}</span><br>${cellHtml(row[ci])}</div>`:'').join('')}
+      </div>`).join('')
+    : `<textarea readonly style="min-height:220px;font-size:12.5px">${esc(it.ai_tz)}</textarea>`;
+  return `<div class="row" style="margin-top:10px"><div class="muted">Раскадровка монтажа (AI)${parsed&&parsed.head?' — '+esc(parsed.head):''}</div><button class="xbtn" data-aicopy>📋 Копировать</button></div>${body}`;
+}
 function renderItemDetail(){
   const it=(TBL_ITEMS||[]).find(x=>x.id==TBL_OPEN);
   if(!it){ TBL_OPEN=null; return renderTable(); }
@@ -368,9 +392,8 @@ function renderItemDetail(){
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
-    ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 Сгенерировать раскадровку монтажа (AI)</button>
-    ${it.ai_tz?`<div class="row" style="margin-top:8px"><div class="muted">Раскадровка монтажа (AI):</div><button class="xbtn" data-aicopy>📋 Копировать</button></div>
-    <textarea readonly style="min-height:220px;font-size:12.5px">${esc(it.ai_tz)}</textarea>`:''}`:''}
+    ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 ${it.ai_tz?'Пересоздать':'Сгенерировать'} раскадровку монтажа (AI)</button>
+    ${renderAiTzBlock(it)}`:''}
     <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:''}
   </div>`;
 }
