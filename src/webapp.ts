@@ -85,6 +85,23 @@ export function parseShootDay(s: string | null | undefined): string | null {
   return day.toISOString().slice(0, 10);
 }
 
+// лояльный парсер дедлайна для полей вида "18.07 суббота" (как в карточке пункта) — в отличие от parseDeadline не требует точного совпадения всей строки
+export function parseFlexibleDeadline(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const str = String(s).trim();
+  const dm = str.match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?/);
+  if (!dm) return null;
+  const tm = str.match(/(\d{1,2}):(\d{2})/);
+  const now = new Date(Date.now() + 5 * 3600 * 1000);
+  const d = +dm[1], mo = +dm[2];
+  let y = dm[3] ? +dm[3] : now.getUTCFullYear();
+  if (y < 100) y += 2000;
+  const hh = tm ? +tm[1] : 18, mi = tm ? +tm[2] : 0;
+  const localMs = Date.UTC(y, mo - 1, d, hh, mi);
+  if (Number.isNaN(localMs)) return null;
+  return new Date(localMs - 5 * 3600 * 1000).toISOString();
+}
+
 // фото из ТЗ-формы приходит data-URL'ом (сжатое на клиенте), тут просто декодируем base64
 function parseDataUrlImage(s?: string | null): Buffer | null {
   if (!s || typeof s !== "string") return null;
@@ -573,8 +590,10 @@ export async function doAction(userId: number, action: any) {
       const itemId = action.itemId ? +action.itemId : null;
       const proj = projectId ? await d2.getProject(projectId) : null;
       const title = `ТЗ • ${sec.label}${proj ? " • " + proj.name : ""}: ${text.slice(0, 50)}`;
-      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId });
-      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}`;
+      const dl = action.deadline ? parseFlexibleDeadline(String(action.deadline)) : null;
+      await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId, deadline: dl });
+      const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
+      const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}`;
       const photoBuf = parseDataUrlImage(action.photo);
       if (specialist) { try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {} }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await sendTzMessage(b.chat_id, msg, photoBuf); } catch {} }
