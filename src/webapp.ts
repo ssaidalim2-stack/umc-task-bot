@@ -609,10 +609,10 @@ export async function doAction(userId: number, action: any) {
       const it = await d2.getItem(+action.id);
       const script = String(action.script || "").trim();
       if (!it || !script) return { items: items0.map(serializeItem) };
-      let aiText = "";
-      try { aiText = await generateTz(script); }
-      catch (e: any) { return { items: items0.map(serializeItem), error: `Ошибка AI: ${e?.message || e}` }; }
       const d = parseItemData((it as any).title);
+      let aiText = "";
+      try { aiText = await generateTz(script, d.lang || "ru"); }
+      catch (e: any) { return { items: items0.map(serializeItem), error: `Ошибка AI: ${e?.message || e}` }; }
       d.ai_tz = aiText;
       await d2.updateItem(+action.id, { title: JSON.stringify(d) });
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
