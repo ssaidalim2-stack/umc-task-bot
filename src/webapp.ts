@@ -658,6 +658,16 @@ export async function doAction(userId: number, action: any) {
       }
       break;
     }
+    case "plan_set_active": {
+      if (role !== "admin" && role !== "manager") break;
+      await d2.setPlanActive(+action.projectId, +action.planId);
+      break;
+    }
+    case "plan_delete": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await d2.deletePlan(+action.planId);
+      break;
+    }
   }
   return getData(userId);
 }

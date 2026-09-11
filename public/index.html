@@ -132,7 +132,7 @@ const TZ_TEMPLATES={
 let TZ_FIELDS={};
 function captureTZ(){ (TZ_TEMPLATES[TZ_SEC]||[]).forEach(([id])=>{ const e=document.getElementById('tz_'+id); if(e) TZ_FIELDS[id]=e.value; }); }
 // состояние таблицы
-let TBL_PROJ=null, TBL_PLAN=null, TBL_ITEMS=null, TBL_OPEN=null, TBL_LOADED=null, TBL_NEWPERIOD=false;
+let TBL_PROJ=null, TBL_PLAN=null, TBL_ITEMS=null, TBL_OPEN=null, TBL_LOADED=null, TBL_NEWPERIOD=false, TBL_PERIOD_MGR=false;
 let ASSIGN_I=0;
 const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["photo","📷 Фото"]];
 const TYPE_ICON={video:"🎬",graphic:"🖼",photo:"📷"};
@@ -262,7 +262,16 @@ function renderTable(){
 
   const projPills=projects.map(x=>`<div class="pill ${x.id==TBL_PROJ?'active':''}" data-tproj="${x.id}">${esc(x.name)}</div>`).join('');
   const periodPills=plans.map(pl=>`<div class="pill ${pl.id==TBL_PLAN?'active':''}" data-tplan="${pl.id}">${esc(pl.period)}${pl.is_active?' •':''}</div>`).join('')
-    + (canEdit()?`<div class="pill" data-tplan-new>＋ период</div>`:'');
+    + (canEdit()?`<div class="pill" data-tplan-new>＋ период</div><div class="pill ${TBL_PERIOD_MGR?'active':''}" data-periodmgr>⚙️ периоды</div>`:'');
+
+  const periodMgr = (TBL_PERIOD_MGR && canEdit()) ? `<div class="card">
+    <div class="muted" style="margin-bottom:6px">Управление периодами — «•» значит активен сейчас (виден в боте по умолчанию):</div>
+    ${plans.map(pl=>`<div class="vid" style="align-items:center"><span style="min-width:0">${esc(pl.period)}${pl.is_active?' <b>•</b>':''}</span>
+      <div style="display:flex;gap:6px;flex:0 0 auto">
+        ${pl.is_active?'':`<button class="xbtn" data-planactivate="${pl.id}">Сделать активным</button>`}
+        <button class="xbtn" data-plandel="${pl.id}" title="Удалить период и все пункты в нём">🗑</button>
+      </div></div>`).join('')}
+    </div>` : '';
 
   const newP = (TBL_NEWPERIOD && canEdit()) ? `<div class="card"><div class="muted">Новый период (таблица):</div>
     <input id="np_name" placeholder="напр. Июль–Август 2026">
@@ -282,7 +291,7 @@ function renderTable(){
     <button class="btn sm sec" data-tadd="graphic">＋ Граф-пост</button>
     <button class="btn sm sec" data-tadd="photo">＋ Фото</button></div>`:'';
 
-  return `<div class="pills">${projPills}</div><div class="pills">${periodPills}</div>${newP}
+  return `<div class="pills">${projPills}</div><div class="pills">${periodPills}</div>${periodMgr}${newP}
     <div class="card"><h3>📋 ${esc(p.name)}</h3>${rows}${addBtns}</div>`;
 }
 
@@ -795,6 +804,13 @@ function bind(){
   document.querySelectorAll('[data-tproj]').forEach(b=>b.onclick=()=>{TBL_PROJ=+b.dataset.tproj;TBL_PLAN=null;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
   document.querySelectorAll('[data-tplan]').forEach(b=>b.onclick=()=>{TBL_PLAN=+b.dataset.tplan;TBL_OPEN=null;TBL_NEWPERIOD=false;render();});
   const pnew=document.querySelector('[data-tplan-new]'); if(pnew) pnew.onclick=()=>{TBL_NEWPERIOD=!TBL_NEWPERIOD;render();};
+  const pmgr=document.querySelector('[data-periodmgr]'); if(pmgr) pmgr.onclick=()=>{TBL_PERIOD_MGR=!TBL_PERIOD_MGR;render();};
+  document.querySelectorAll('[data-planactivate]').forEach(b=>b.onclick=()=>act({type:'plan_set_active',projectId:TBL_PROJ,planId:+b.dataset.planactivate}));
+  document.querySelectorAll('[data-plandel]').forEach(b=>b.onclick=()=>{
+    const id=+b.dataset.plandel;
+    const del=()=>act({type:'plan_delete',planId:id});
+    if(tg.showConfirm){tg.showConfirm('Удалить период и ВСЕ пункты в нём? Это необратимо.',(ok)=>{if(ok)del();});}else del();
+  });
   const npc=document.querySelector('[data-np-create]'); if(npc) npc.onclick=async()=>{const period=(val('np_name')||'').trim(); if(!period){tg.showAlert&&tg.showAlert('Введите название периода');return;} const videos=parseInt(val('np_videos'))||0, graphics=parseInt(val('np_graphics'))||0; const res=await api('POST',{type:'plan_create',projectId:TBL_PROJ,period,videos,graphics}); if(res&&res.projects){DATA=res;} TBL_NEWPERIOD=false;TBL_PLAN=null;TBL_LOADED=null; render(); tg.showAlert&&tg.showAlert('Период создан ✅');};
   document.querySelectorAll('[data-topen]').forEach(b=>b.onclick=()=>{TBL_OPEN=+b.dataset.topen;render();});
   const tclose=document.querySelector('[data-tclose]'); if(tclose) tclose.onclick=()=>{TBL_OPEN=null;render();};
