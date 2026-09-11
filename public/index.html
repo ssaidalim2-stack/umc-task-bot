@@ -367,7 +367,7 @@ function renderItemDetail(){
       <div style="flex:1"><div class="muted">Дедлайн:</div><input id="f_deadline" value="${esc(it.deadline)}" placeholder="ДД.ММ" ${ro}></div></div>
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
-    <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'видеографу':'дизайнеру'}</button>
+    <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
     <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:''}
   </div>`;
 }
@@ -843,7 +843,7 @@ function bind(){
     const lines=[`Тема: ${theme}`,`${it.type==='video'?'Сценарий':'Текст'}: ${script}`];
     if(reference.trim()) lines.push(`Референс: ${reference}`);
     if(props.trim()) lines.push(`Реквизиты: ${props}`);
-    const section=it.type==='video'?'video':'design';
+    const section=it.type==='video'?'edit':'design';
     const btn=document.querySelector('[data-tzsend]');
     const prevTxt=btn?btn.textContent:'';
     if(btn&&it.type==='video'){btn.textContent='⏳ Генерирую раскадровку (AI)…';btn.disabled=true;}

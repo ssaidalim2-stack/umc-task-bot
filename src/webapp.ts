@@ -595,7 +595,7 @@ export async function doAction(userId: number, action: any) {
       await d2.createAdhocTask({ title, description: text, assignee_id: specialist?.telegram_id ?? null, assignee_name: specialist?.name ?? null, project_id: projectId, item_id: itemId, deadline: dl });
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
       let aiBlock = "";
-      if (sec.roleKey === "videographer" && action.aiScript && aiConfigured()) {
+      if (sec.roleKey === "editor" && action.aiScript && aiConfigured()) {
         try { aiBlock = `\n\n🎬 Монтажная раскадровка (AI):\n${await generateTz(String(action.aiScript))}`; } catch { /* не роняем отправку ТЗ, если AI недоступен */ }
       }
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}${aiBlock}`;
