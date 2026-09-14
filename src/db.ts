@@ -73,18 +73,31 @@ export async function deleteMember(telegramId: number): Promise<void> {
   await supabase.from("members").delete().eq("telegram_id", telegramId);
 }
 
-const KNOWN_ROLES = ["manager", "videographer", "editor", "designer", "member"];
-// явная роль (specialization хранит канонический ключ) с фолбэком на старое сопоставление по имени
-export function memberRole(m: Member | null): string {
-  if (!m) return "member";
-  const explicit = (m.specialization || "").trim().toLowerCase();
-  if (KNOWN_ROLES.includes(explicit)) return explicit;
+export const KNOWN_ROLES = ["manager", "videographer", "editor", "designer", "sales", "member"];
+// специализация хранит список ролей через запятую ("videographer,sales") — человек может
+// совмещать несколько; фолбэк на старое сопоставление по имени для записей до этой миграции
+export function memberRoleList(m: Member | null): string[] {
+  if (!m) return ["member"];
+  const raw = (m.specialization || "").trim().toLowerCase();
+  if (raw) {
+    const parts = Array.from(new Set(raw.split(",").map((s) => s.trim()).filter((s) => KNOWN_ROLES.includes(s))));
+    if (parts.length) return parts;
+  }
   const hay = ((m.specialization || "") + " " + (m.name || "") + " " + (m.username || "")).toLowerCase();
-  if (/менедж|manager|smm|бобур|боб|bob/.test(hay)) return "manager";
-  if (/монтаж|editor|монтаж[её]р|асрор|asror/.test(hay)) return "editor";
-  if (/видеограф|съ[её]м|videograph|video|саманд|saman/.test(hay)) return "videographer";
-  if (/дизайн|design|влад|vlad/.test(hay)) return "designer";
-  return "member";
+  if (/менедж|manager|smm|бобур|боб|bob/.test(hay)) return ["manager"];
+  if (/монтаж|editor|монтаж[её]р|асрор|asror/.test(hay)) return ["editor"];
+  if (/видеограф|съ[её]м|videograph|video|саманд|saman/.test(hay)) return ["videographer"];
+  if (/дизайн|design|влад|vlad/.test(hay)) return ["designer"];
+  if (/продаж|sales/.test(hay)) return ["sales"];
+  return ["member"];
+}
+// основная роль (первая в списке) — для меток и мест, где нужна ровно одна роль
+export function memberRole(m: Member | null): string {
+  return memberRoleList(m)[0] || "member";
+}
+export async function setMemberRoles(telegramId: number, roles: string[], isAdmin: boolean): Promise<void> {
+  const clean = Array.from(new Set(roles.filter((r) => KNOWN_ROLES.includes(r) && r !== "member")));
+  await supabase.from("members").update({ is_admin: isAdmin, specialization: clean.join(",") || null }).eq("telegram_id", telegramId);
 }
 
 // ---------- tasks ----------

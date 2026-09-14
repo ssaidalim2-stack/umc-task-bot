@@ -258,7 +258,7 @@ function render(){
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
 }
-function roleLabel(r){return {admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",member:"Сотрудник"}[r]||"";}
+function roleLabel(r){return {admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"}[r]||"";}
 
 function renderTable(){
   const projects=DATA.projects;
@@ -732,40 +732,51 @@ function renderTZ(){
     <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
 }
 
-const ROLE_OPTS_TEAM=[["admin","Админ"],["manager","Менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["member","Сотрудник"]];
+const ROLE_OPTS_TEAM=[["manager","Менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
+const ROLE_LABEL_TEAM={admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"};
 const ALL_TABS_FRONT=["home","board","tasks","tz","plan","video","work","analytics","report","subs","mywork","team","projects","sales"];
 const TABS_BY_ROLE_FRONT={
   admin:["home","board","tasks","tz","plan","video","work","analytics","report","subs","team","projects","sales"],
-  manager:["home","board","tasks","tz","plan","work","analytics","report","sales"],
+  manager:["home","board","tasks","tz","plan","work","analytics","report"],
   videographer:["home","mywork","tasks"], editor:["home","mywork","tasks"], designer:["home","mywork","tasks"],
+  sales:["home","sales"],
   member:["home","tasks"],
 };
-let TEAM_PERM_OPEN=null;
+let TEAM_PERM_OPEN=null, TEAM_ROLE_OPEN=null;
 function renderTeam(){
   const rows=(DATA.teamAll||[]).map(m=>{
-    const opts=ROLE_OPTS_TEAM.map(([k,l])=>`<option value="${k}" ${m.role==k?'selected':''}>${l}</option>`).join('');
+    const roles=m.isAdmin?['admin']:(m.roles&&m.roles.length?m.roles:['member']);
     const isCustom=!!(m.tabs&&m.tabs.length);
-    const effective=isCustom?m.tabs:(TABS_BY_ROLE_FRONT[m.role]||['home','tasks']);
-    const panel=TEAM_PERM_OPEN===m.id?`<div class="card" style="margin:6px 0 10px">
-      <div class="muted" style="margin-bottom:6px">Доступные разделы ${isCustom?'<span class="badge">кастомно</span>':'<span class="badge">по роли</span>'}:</div>
+    const effective=isCustom?m.tabs:Array.from(new Set(roles.flatMap(r=>TABS_BY_ROLE_FRONT[r]||['home','tasks'])));
+    const roleBadges=roles.map(r=>ROLE_LABEL_TEAM[r]||r).join(', ');
+    const rolePanel=TEAM_ROLE_OPEN===m.id?`<div class="card" style="margin:6px 0 10px">
+      <div class="muted" style="margin-bottom:6px">Роли — можно назначить несколько сразу:</div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" data-roleadmin="${m.id}" ${m.isAdmin?'checked':''}> 👑 Админ</label>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        ${ROLE_OPTS_TEAM.map(([k,l])=>`<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" data-rolechk="${m.id}:${k}" ${roles.includes(k)?'checked':''}> ${l}</label>`).join('')}
+      </div>
+      <button class="btn xs" data-rolesave="${m.id}" style="margin-top:10px">Сохранить</button>
+    </div>`:'';
+    const permPanel=TEAM_PERM_OPEN===m.id?`<div class="card" style="margin:6px 0 10px">
+      <div class="muted" style="margin-bottom:6px">Доступные разделы ${isCustom?'<span class="badge">кастомно</span>':'<span class="badge">по ролям</span>'}:</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
         ${ALL_TABS_FRONT.map(k=>`<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" data-permchk="${m.id}:${k}" ${effective.includes(k)?'checked':''} ${k==='home'?'disabled':''}> ${TABMETA[k]?TABMETA[k].ic+' '+TABMETA[k].t:k}</label>`).join('')}
       </div>
       <div class="row" style="gap:6px;margin-top:10px">
         <button class="btn xs" data-permsave="${m.id}">Сохранить</button>
-        <button class="btn xs sec" data-permreset="${m.id}">Сбросить (по роли)</button>
+        <button class="btn xs sec" data-permreset="${m.id}">Сбросить (по ролям)</button>
       </div>
     </div>`:'';
     return `<div class="vid" style="align-items:center">
-      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${m.username?'@'+esc(m.username):''}</div></div>
-      <select class="rsel" data-teamrole="${m.id}" style="width:auto;min-width:120px">${opts}</select>
+      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${roleBadges}${m.username?' · @'+esc(m.username):''}</div></div>
+      <button class="xbtn" data-roletoggle="${m.id}" title="Роли">🎭</button>
       <button class="xbtn" data-permtoggle="${m.id}" title="Права доступа к разделам">⚙️</button>
       <button class="xbtn" data-teamdel="${m.id}" title="Удалить из команды">🗑</button>
-    </div>${panel}`;
+    </div>${rolePanel}${permPanel}`;
   }).join('');
   return `<div class="card"><h3>👥 Команда</h3>
     ${rows||'<div class="muted">Пока никто не заходил в бота.</div>'}
-    <div class="muted" style="font-size:12px;margin-top:10px">Новый человек появится тут сам, как только откроет бота (/start). Роль определяет набор разделов по умолчанию — кнопкой ⚙️ можно точечно включить/выключить конкретные разделы именно для этого человека.</div></div>`;
+    <div class="muted" style="font-size:12px;margin-top:10px">Новый человек появится тут сам, как только откроет бота (/start). Кнопка 🎭 — назначить одну или несколько ролей (они складывают доступные разделы). Кнопка ⚙️ — точечно включить/выключить конкретные разделы именно для этого человека, в обход ролей.</div></div>`;
 }
 function renderProjects(){
   const all=DATA.projectsAll||[];
@@ -886,9 +897,17 @@ function bind(){
   document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=null;render();});
   document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=+b.dataset.exec;render();});
   document.querySelectorAll('[data-tzitem]').forEach(b=>b.onclick=()=>{captureTZ();TZ_ITEM=b.dataset.tzitem?+b.dataset.tzitem:null;render();});
-  document.querySelectorAll('[data-teamrole]').forEach(s=>s.onchange=()=>act({type:'team_set_role',id:+s.dataset.teamrole,role:s.value}));
   document.querySelectorAll('[data-teamdel]').forEach(b=>b.onclick=()=>{const id=+b.dataset.teamdel;const del=()=>act({type:'team_delete',id});if(tg.showConfirm){tg.showConfirm('Удалить участника из команды?',(ok)=>{if(ok)del();});}else del();});
-  document.querySelectorAll('[data-permtoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.permtoggle;TEAM_PERM_OPEN=(TEAM_PERM_OPEN===id?null:id);render();});
+  document.querySelectorAll('[data-roletoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.roletoggle;TEAM_ROLE_OPEN=(TEAM_ROLE_OPEN===id?null:id);TEAM_PERM_OPEN=null;render();});
+  document.querySelectorAll('[data-rolesave]').forEach(b=>b.onclick=()=>{
+    const id=+b.dataset.rolesave;
+    const isAdminChk=document.querySelector(`[data-roleadmin="${id}"]`);
+    const isAdmin=isAdminChk?isAdminChk.checked:false;
+    const roles=[...document.querySelectorAll(`[data-rolechk^="${id}:"]`)].filter(c=>c.checked).map(c=>c.dataset.rolechk.split(':')[1]);
+    TEAM_ROLE_OPEN=null;
+    act({type:'team_set_roles',id,roles,isAdmin});
+  });
+  document.querySelectorAll('[data-permtoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.permtoggle;TEAM_PERM_OPEN=(TEAM_PERM_OPEN===id?null:id);TEAM_ROLE_OPEN=null;render();});
   document.querySelectorAll('[data-permsave]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.permsave;
     const boxes=document.querySelectorAll('[data-permchk^="'+id+':"]');

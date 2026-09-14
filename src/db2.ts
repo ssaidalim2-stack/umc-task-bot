@@ -1,4 +1,4 @@
-import { supabase, Member, listMembers, memberRole, listAdmins, setMemberRole, deleteMember as dbDeleteMember } from "./db";
+import { supabase, Member, listMembers, memberRoleList, listAdmins, setMemberRoles, deleteMember as dbDeleteMember } from "./db";
 import { PERSON_KEYWORDS } from "./projects";
 
 export interface Project { id: number; key: string; name: string; }
@@ -151,14 +151,13 @@ export async function resolveMember(anchorName: string): Promise<Member | null> 
   return resolveMemberSync(await membersAll(), anchorName);
 }
 
-// ---------- роли команды (явное назначение вместо угадывания по имени) ----------
+// ---------- роли команды (явное назначение вместо угадывания по имени, человек может совмещать несколько) ----------
 export async function membersWithRole(role: string): Promise<Member[]> {
   if (role === "admin") return listAdmins();
-  return (await membersAll()).filter((m) => memberRole(m) === role);
+  return (await membersAll()).filter((m) => memberRoleList(m).includes(role));
 }
-export async function setTeamRole(telegramId: number, role: string): Promise<void> {
-  if (role === "admin") await setMemberRole(telegramId, true, null);
-  else await setMemberRole(telegramId, false, role);
+export async function setTeamRoles(telegramId: number, roles: string[], isAdmin: boolean): Promise<void> {
+  await setMemberRoles(telegramId, roles, isAdmin);
   _membersCache = null;
 }
 export async function removeMember(telegramId: number): Promise<void> {

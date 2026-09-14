@@ -35,10 +35,11 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 
 const TABS_BY_ROLE: Record<string, string[]> = {
   admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
-  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report", "sales"],
+  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
   designer: ["home", "mywork", "tasks"],
+  sales: ["home", "sales"],
   member: ["home", "tasks"],
 };
 const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
@@ -50,7 +51,7 @@ const SECTION = {
   edit: { label: "Монтаж", roleKey: "editor", specialty: "edit" },
 } as const;
 
-const ROLE_LABEL_RU: Record<string, string> = { admin: "Админ", manager: "Менеджер", videographer: "Видеограф", editor: "Монтажёр", designer: "Дизайнер", member: "Сотрудник" };
+const ROLE_LABEL_RU: Record<string, string> = { admin: "Админ", manager: "Менеджер", videographer: "Видеограф", editor: "Монтажёр", designer: "Дизайнер", sales: "Отдел продаж", member: "Сотрудник" };
 const OPERATIONAL_ROLES = ["manager", "videographer", "editor", "designer"];
 
 function isAdminId(member: db.Member | null, id: number) {
@@ -141,10 +142,11 @@ function serializeItem(v: any) {
   const d = parseItemData(v.title);
   return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "" };
 }
-async function hasSalesAccess(userId: number, role: string): Promise<boolean> {
+async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin: boolean): Promise<boolean> {
+  if (isAdmin) return true;
   const customTabs = await d2.getMemberTabs(userId);
-  const myTabs = customTabs ? Array.from(new Set(["home", ...customTabs])) : (TABS_BY_ROLE[role] || []);
-  return myTabs.includes("sales");
+  if (customTabs) return customTabs.includes("sales");
+  return db.memberRoleList(member).includes("sales");
 }
 async function serializeLeads() {
   const leads = await d2.listSalesLeads();
@@ -164,7 +166,10 @@ export async function getData(userId: number) {
   const isAdmin = isAdminId(member, userId);
   const role = roleOf(member, isAdmin);
   const customTabs = await d2.getMemberTabs(userId);
-  const tabs = customTabs ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))])) : (TABS_BY_ROLE[role] || ["tasks"]);
+  const memberRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
+  const tabs = customTabs
+    ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))]))
+    : Array.from(new Set(memberRoles.flatMap((r) => TABS_BY_ROLE[r] || [])));
 
   const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
   const plansByProject = new Map<number, any[]>();
@@ -299,7 +304,7 @@ export async function getData(userId: number) {
       specialists[sec] = members.filter((m) => db.memberRole(m) === cfg.roleKey).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
     }
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
-    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), tabs: customTabsBulk[m.telegram_id] || null }));
+    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
@@ -521,13 +526,14 @@ export async function doAction(userId: number, action: any) {
       try { return { day, snap: await meta.pullSnapshot(day) }; }
       catch (e: any) { return { error: String(e.message || e) }; }
     }
-    // ---------- команда: явное назначение ролей ----------
-    case "team_set_role": {
+    // ---------- команда: явное назначение ролей (человек может совмещать несколько) ----------
+    case "team_set_roles": {
       if (role !== "admin") return { error: "нет доступа" };
       const target = +action.id;
-      const newRole = String(action.role || "member");
-      if (target === userId && newRole !== "admin") return { error: "нельзя снять роль админа с самого себя" };
-      await d2.setTeamRole(target, newRole);
+      const makeAdmin = !!action.isAdmin;
+      if (target === userId && !makeAdmin) return { error: "нельзя снять роль админа с самого себя" };
+      const roles = Array.isArray(action.roles) ? action.roles.map((r: any) => String(r)) : [];
+      await d2.setTeamRoles(target, roles, makeAdmin);
       return getData(userId);
     }
     case "team_delete": {
@@ -631,23 +637,23 @@ export async function doAction(userId: number, action: any) {
 
     // ---- отдел продаж (доступ по вкладке, не по роли — назначается точечно через чекбоксы в «Команде») ----
     case "sales_list": {
-      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
       return { salesLeads: await serializeLeads() };
     }
     case "sales_add": {
-      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
       const f = action.fields || {};
       await d2.createSalesLead({ name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status, added_by: userId, added_by_name: member?.name || String(userId) });
       return { salesLeads: await serializeLeads() };
     }
     case "sales_update": {
-      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
       const f = action.fields || {};
       await d2.updateSalesLead(+action.id, { name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status });
       return { salesLeads: await serializeLeads() };
     }
     case "sales_delete": {
-      if (!(await hasSalesAccess(userId, role)) || (role !== "admin" && role !== "manager")) return { salesLeads: await serializeLeads() };
+      if (!isAdmin) return { salesLeads: await serializeLeads() };
       await d2.deleteSalesLead(+action.id);
       return { salesLeads: await serializeLeads() };
     }
