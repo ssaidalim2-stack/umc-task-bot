@@ -75,6 +75,7 @@
   .seg.on{background:linear-gradient(135deg,var(--accent),#16a34a);color:#fff}
   textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:10px;font-size:15px;font-family:inherit;resize:vertical;transition:border-color .15s ease}
   input{width:100%;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:9px 10px;font-size:15px;font-family:inherit;transition:border-color .15s ease}
+  input[type=checkbox]{width:16px;height:16px;flex:none;padding:0}
   textarea:focus,input:focus{outline:none;border-color:var(--btn)}
   .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:rgba(127,127,127,.16)}
   .ctab{width:100%;border-collapse:collapse;font-size:13px}
@@ -214,10 +215,40 @@ async function api(method, body){
 }
 function haptic(){ try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){} }
 async function load(){ try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
-async function act(a){ haptic(); const res=await api('POST',a); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);} else if(res&&res.projects){DATA=res;buildTabs();} else if(res&&res.items){TBL_ITEMS=res.items;} render(); }
+let ACT_BUSY=false;
+async function act(a){
+  if(ACT_BUSY) return;
+  ACT_BUSY=true; haptic();
+  try{
+    const res=await api('POST',a);
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);}
+    else if(res&&res.projects){DATA=res;buildTabs();}
+    else if(res&&res.items){TBL_ITEMS=res.items;}
+    render();
+  } finally { ACT_BUSY=false; }
+}
+// защита от повторной отправки: блокирует кнопку сразу (до ответа сервера), а не после —
+// так повторные клики "пока ждём" просто не долетают, вместо того чтобы задвоить действие
+async function busyClick(el, fn){
+  if(!el || el.disabled) return;
+  el.disabled=true;
+  try{ await fn(); } finally { el.disabled=false; }
+}
 
 function bar(done,total){ const p=total?Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
 function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+// нативный пикер даты/времени (крутящаяся "воронка" на iOS) рядом с текстовым полем —
+// формат хранения (ДД.ММ.ГГГГ[ ЧЧ:ММ]) не меняется, пикер просто форматирует свой выбор в него,
+// текстовое поле остаётся доступным для ручного ввода/просмотра уже сохранённых старых значений
+function formatPicked(iso,withTime){
+  const[datePart,timePart]=iso.split('T');
+  const[y,m,d]=datePart.split('-');
+  return withTime&&timePart?`${d}.${m}.${y} ${timePart}`:`${d}.${m}.${y}`;
+}
+function pickerPair(id,value,placeholder,withTime,ro){
+  return `<div class="row" style="gap:6px"><input id="${id}" value="${esc(value)}" placeholder="${placeholder}" ${ro} style="flex:1.3;min-width:0">
+    <input type="${withTime?'datetime-local':'date'}" data-pick="${id}:${withTime?1:0}" ${ro} style="flex:1;min-width:0" title="Выбрать из календаря"></div>`;
+}
 
 // первые 4 вкладки закреплены внизу, остальные — в сетке «Ещё»
 const TAB_PRIMARY={admin:["home","tasks","plan","analytics"],manager:["home","tasks","plan","analytics"]};
@@ -393,8 +424,8 @@ function renderItemDetail(){
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
     <div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
     <div class="row" style="gap:10px">
-      ${it.type==='video'?`<div style="flex:1"><div class="muted">Дата съёмки:</div><input id="f_shoot" value="${esc(it.shoot_date)}" placeholder="ДД.ММ" ${ro}></div>`:''}
-      <div style="flex:1"><div class="muted">Дедлайн:</div><input id="f_deadline" value="${esc(it.deadline)}" placeholder="ДД.ММ" ${ro}></div></div>
+      ${it.type==='video'?`<div style="flex:1"><div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}</div>`:''}
+      <div style="flex:1"><div class="muted">Дедлайн:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}</div></div>
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
@@ -482,7 +513,7 @@ function renderBoard(){
 function renderTasks(){
   let h=`<div class="card"><h3>✅ Мои задачи</h3>`;
   if(!DATA.myTasks.length) h+='<div class="muted">Активных задач нет 🎉</div>';
-  h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><div style="display:flex;gap:6px"><button class="btn sm" data-done="${t.id}">Выполнил</button><button class="btn sm sec" data-file="${t.id}" title="Сдать файл">📎</button></div></div>`).join('');
+  h+=DATA.myTasks.map(t=>`<div class="vid"><span>${esc(t.title)}</span><div style="display:flex;gap:6px"><button class="btn sm" data-done="${t.id}">Выполнил</button><button class="btn sm sec" data-file="${t.id}" title="Сдать файл">📎</button>${DATA.user.role==='admin'?`<button class="xbtn" data-taskdel="${t.id}" title="Удалить">🗑</button>`:''}</div></div>`).join('');
   h+='</div>';
   if(DATA.confirmable&&DATA.confirmable.length){
     h+=`<div class="card"><h3>🔔 Требуют моего утверждения</h3>`;
@@ -502,7 +533,7 @@ function renderTasks(){
       <div class="muted">Исполнитель:</div><div class="pills">${pills}</div>
       <input id="assignTitle" placeholder="Что нужно сделать…">
       <div class="muted" style="margin-top:6px">Дедлайн (необязательно):</div>
-      <input id="assignDeadline" placeholder="напр. 12.07 или 12.07 18:00" style="max-width:240px">
+      ${pickerPair('assignDeadline','','напр. 12.07 или 12.07 18:00',true,'')}
       <button class="btn full" data-assign-send style="margin-top:8px">📌 Назначить</button></div>`;
   }
   return h;
@@ -837,7 +868,7 @@ function renderSalesDetail(){
     <div class="muted">Ниша:</div><input id="sf_niche" value="${esc(e.niche)}">
     <div class="muted">Инстаграм:</div><input id="sf_instagram" value="${esc(e.instagram)}" placeholder="@username">
     <div class="muted">Номер для связи:</div><input id="sf_phone" value="${esc(e.phone)}">
-    <div class="muted">Когда был звонок:</div><input id="sf_called" value="${esc(e.called_at)}" placeholder="ДД.ММ или как удобно">
+    <div class="muted">Когда был звонок:</div>${pickerPair('sf_called',e.called_at,'ДД.ММ или как удобно',false,'')}
     <div class="muted">Какой ответ:</div><textarea id="sf_response" style="min-height:70px">${esc(e.response)}</textarea>
     <div class="muted" style="margin-top:6px">Статус:</div><div class="pills">${statusPills}</div>
     ${!isNew?`<div class="muted" style="font-size:12px;margin-top:8px">Добавил: ${esc(e.added_by_name||'—')}</div>`:''}
@@ -856,11 +887,17 @@ function renderMyWork(){
 }
 
 function bind(){
+  document.querySelectorAll('[data-pick]').forEach(inp=>inp.onchange=()=>{
+    const[targetId,wt]=inp.dataset.pick.split(':');
+    const target=document.getElementById(targetId);
+    if(!target||!inp.value) return;
+    target.value=formatPicked(inp.value,wt==='1');
+  });
   document.querySelectorAll('[data-salesopen]').forEach(b=>b.onclick=()=>{SALES_OPEN=+b.dataset.salesopen;SALES_EDIT=null;render();});
   const salesNew=document.querySelector('[data-salesnew]'); if(salesNew) salesNew.onclick=()=>{SALES_OPEN='new';SALES_EDIT=null;render();};
   const salesClose=document.querySelector('[data-salesclose]'); if(salesClose) salesClose.onclick=()=>{SALES_OPEN=null;SALES_EDIT=null;render();};
   document.querySelectorAll('[data-salesstatus]').forEach(b=>b.onclick=()=>{captureSalesFields();SALES_EDIT.status=b.dataset.salesstatus;render();});
-  const salesSave=document.querySelector('[data-salessave]'); if(salesSave) salesSave.onclick=async()=>{
+  const salesSave=document.querySelector('[data-salessave]'); if(salesSave) salesSave.onclick=()=>busyClick(salesSave, async()=>{
     captureSalesFields();
     if(!SALES_EDIT.name.trim()&&!SALES_EDIT.phone.trim()&&!SALES_EDIT.instagram.trim()){tg.showAlert&&tg.showAlert('Заполни хотя бы имя, телефон или инстаграм');return;}
     const fields={name:SALES_EDIT.name,niche:SALES_EDIT.niche,instagram:SALES_EDIT.instagram,phone:SALES_EDIT.phone,called_at:SALES_EDIT.called_at,response:SALES_EDIT.response,status:SALES_EDIT.status};
@@ -870,14 +907,14 @@ function bind(){
     if(res&&res.salesLeads)DATA.salesLeads=res.salesLeads;
     SALES_OPEN=null;SALES_EDIT=null;render();
     tg.showAlert&&tg.showAlert('Сохранено ✅');
-  };
+  });
   const salesDel=document.querySelector('[data-salesdel]'); if(salesDel) salesDel.onclick=()=>{
-    const del=async()=>{
+    const del=()=>busyClick(salesDel, async()=>{
       const res=await api('POST',{type:'sales_delete',id:SALES_EDIT.id});
       if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
       if(res&&res.salesLeads)DATA.salesLeads=res.salesLeads;
       SALES_OPEN=null;SALES_EDIT=null;render();
-    };
+    });
     if(tg.showConfirm) tg.showConfirm('Удалить контакт?',(ok)=>{if(ok)del();}); else del();
   };
   document.querySelectorAll('[data-go-video]').forEach(b=>b.onclick=()=>{PROJ=+b.dataset.goVideo;TAB=DATA.tabs.includes('video')?'video':TAB;buildTabs();render();});
@@ -952,8 +989,8 @@ function bind(){
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();};
-  const tzsend=document.querySelector('[data-tzsend]'); if(tzsend) tzsend.onclick=async()=>{
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
+  const tzsend=document.querySelector('[data-tzsend]'); if(tzsend) tzsend.onclick=()=>busyClick(tzsend, async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
     const theme=val('f_theme'), script=it.script||'', reference=val('f_reference'), props=val('f_props'), deadline=val('f_deadline');
@@ -968,7 +1005,7 @@ function bind(){
     const section=it.type==='video'?'edit':'design';
     await act({type:'tz',section,execId:null,projectId:TBL_PROJ,itemId:it.id,deadline,text:lines.join('\n')});
     tg.showAlert&&tg.showAlert('ТЗ отправлено ✅');
-  };
+  });
   const airaska=document.querySelector('[data-airaska]'); if(airaska) airaska.onclick=async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');

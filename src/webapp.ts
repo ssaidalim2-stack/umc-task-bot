@@ -293,15 +293,20 @@ export async function getData(userId: number) {
       return { total: mine.length, done: done.length, open: mine.length - done.length, onTime, late };
     };
     for (const roleKey of OPERATIONAL_ROLES) {
-      const mems = members.filter((m) => db.memberRole(m) === roleKey);
+      const mems = members.filter((m) => db.memberRoleList(m).includes(roleKey));
       if (!mems.length) { team.push({ id: null, role: ROLE_LABEL_RU[roleKey], name: "— вакансия —", registered: false, tasks: [], stats: null }); continue; }
       for (const m of mems) {
         const tks = memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
         team.push({ id: m.telegram_id, role: ROLE_LABEL_RU[roleKey], name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })), stats: statsFor(m.telegram_id) });
       }
     }
+    // админ должен всегда иметь возможность назначить задачу самому себе, независимо от рабочих ролей
+    if (isAdmin && member && !team.some((t) => t.id === userId)) {
+      const tks = memTasks(member).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
+      team.unshift({ id: userId, role: "Админ", name: member.name || member.username || String(userId), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })), stats: statsFor(userId) });
+    }
     for (const [sec, cfg] of Object.entries(SECTION)) {
-      specialists[sec] = members.filter((m) => db.memberRole(m) === cfg.roleKey).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
+      specialists[sec] = members.filter((m) => db.memberRoleList(m).includes(cfg.roleKey)).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
     }
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
     teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null }));
