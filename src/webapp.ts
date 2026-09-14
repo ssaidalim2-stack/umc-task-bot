@@ -34,14 +34,14 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team", "projects"],
-  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
+  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
+  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report", "sales"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
   designer: ["home", "mywork", "tasks"],
   member: ["home", "tasks"],
 };
-const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects"];
+const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -140,6 +140,15 @@ function framesToText(frames: any[]): string {
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
   return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "" };
+}
+async function hasSalesAccess(userId: number, role: string): Promise<boolean> {
+  const customTabs = await d2.getMemberTabs(userId);
+  const myTabs = customTabs ? Array.from(new Set(["home", ...customTabs])) : (TABS_BY_ROLE[role] || []);
+  return myTabs.includes("sales");
+}
+async function serializeLeads() {
+  const leads = await d2.listSalesLeads();
+  return leads.map((l) => ({ id: l.id, name: l.name || "", niche: l.niche || "", instagram: l.instagram || "", phone: l.phone || "", called_at: l.called_at || "", response: l.response || "", status: l.status, added_by_name: l.added_by_name || "" }));
 }
 
 // ---------- сбор данных ----------
@@ -294,6 +303,8 @@ export async function getData(userId: number) {
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
+  const salesLeads = tabs.includes("sales") ? await serializeLeads() : [];
+
   let myWork: any[] = [];
   if (role === "videographer" || role === "editor" || role === "designer") {
     const stage = role === "videographer" ? "shoot" : role === "editor" ? "edit" : null;
@@ -321,7 +332,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-    confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut,
+    confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -616,6 +627,29 @@ export async function doAction(userId: number, action: any) {
       d.ai_tz = aiText;
       await d2.updateItem(+action.id, { title: JSON.stringify(d) });
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+
+    // ---- отдел продаж (доступ по вкладке, не по роли — назначается точечно через чекбоксы в «Команде») ----
+    case "sales_list": {
+      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      return { salesLeads: await serializeLeads() };
+    }
+    case "sales_add": {
+      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      const f = action.fields || {};
+      await d2.createSalesLead({ name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status, added_by: userId, added_by_name: member?.name || String(userId) });
+      return { salesLeads: await serializeLeads() };
+    }
+    case "sales_update": {
+      if (!(await hasSalesAccess(userId, role))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      const f = action.fields || {};
+      await d2.updateSalesLead(+action.id, { name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status });
+      return { salesLeads: await serializeLeads() };
+    }
+    case "sales_delete": {
+      if (!(await hasSalesAccess(userId, role)) || (role !== "admin" && role !== "manager")) return { salesLeads: await serializeLeads() };
+      await d2.deleteSalesLead(+action.id);
+      return { salesLeads: await serializeLeads() };
     }
 
     // ---- редактируемая таблица контент-плана ----

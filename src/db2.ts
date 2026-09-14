@@ -319,3 +319,40 @@ export async function claimMarker(marker: string, day: string): Promise<boolean>
   await supabase.from("cron_markers").upsert({ marker, day }, { onConflict: "marker" });
   return true;
 }
+
+// ---------- отдел продаж ----------
+export interface SalesLead {
+  id: number;
+  name: string | null;
+  niche: string | null;
+  instagram: string | null;
+  phone: string | null;
+  called_at: string | null;
+  response: string | null;
+  status: string;
+  added_by: number | null;
+  added_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export async function listSalesLeads(): Promise<SalesLead[]> {
+  const { data } = await supabase.from("sales_leads").select("*").order("created_at", { ascending: false });
+  return (data as SalesLead[]) ?? [];
+}
+export async function createSalesLead(input: {
+  name?: string; niche?: string; instagram?: string; phone?: string;
+  called_at?: string; response?: string; status?: string;
+  added_by: number; added_by_name: string;
+}): Promise<void> {
+  await supabase.from("sales_leads").insert({
+    name: input.name || null, niche: input.niche || null, instagram: input.instagram || null,
+    phone: input.phone || null, called_at: input.called_at || null, response: input.response || null,
+    status: input.status || "new", added_by: input.added_by, added_by_name: input.added_by_name,
+  });
+}
+export async function updateSalesLead(id: number, patch: Partial<SalesLead>): Promise<void> {
+  await supabase.from("sales_leads").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+}
+export async function deleteSalesLead(id: number): Promise<void> {
+  await supabase.from("sales_leads").delete().eq("id", id);
+}
