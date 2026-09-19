@@ -140,7 +140,7 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
 }
 async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin: boolean): Promise<boolean> {
   if (isAdmin) return true;
@@ -688,12 +688,13 @@ export async function doAction(userId: number, action: any) {
     case "item_update": {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const item0 = await d2.getItem(+action.id);
+      const prevData0 = item0 ? parseItemData((item0 as any).title) : {};
+      if (prevData0.locked && role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const f = action.fields || {};
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const prevAiTz = item0 ? parseItemData((item0 as any).title).ai_tz || "" : "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "", ai_tz: prevAiTz };
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
       const patch: any = { title: JSON.stringify(data) };
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
@@ -707,14 +708,25 @@ export async function doAction(userId: number, action: any) {
       const it = await d2.getItem(+action.id);
       if (!it) return { items: [] };
       const d = parseItemData((it as any).title);
+      if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const p = action.patch || {};
       for (const k of ["theme", "script", "reference", "props", "shoot_date", "deadline"]) if (k in p) (d as any)[k] = p[k];
+      d.last_edited_by = member?.name || String(userId);
       const patch: any = { title: JSON.stringify(d) };
       if (p.type) patch.type = p.type;
       if (p.status) { patch.stage = p.status; patch.status = p.status === "published" || p.status === "done" ? "done" : "in_progress"; }
       else if (it.type === "video" && it.stage === "idea" && "script" in p && String(p.script || "").trim()) patch.stage = "script";
       await d2.updateItem(+action.id, patch);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
+      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+    }
+    case "item_lock": {
+      if (role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { items: [] };
+      const d = parseItemData((it as any).title);
+      d.locked = !d.locked;
+      await d2.updateItem(+action.id, { title: JSON.stringify(d) });
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_delete": {

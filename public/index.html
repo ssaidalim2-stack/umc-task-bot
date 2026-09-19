@@ -439,9 +439,15 @@ function renderItemDetail(){
   const typePills=TYPE_OPTS.map(([k,l])=>`<div class="pill ${it.type==k?'active':''}" data-titype="${k}">${l}</div>`).join('');
   const statusPills=STATUS_OPTS(it.type).map(([k,l])=>`<div class="pill ${it.stage==k?'active':''}" data-tstatus="${k}">${l}</div>`).join('');
   const scriptLabel=it.type==='video'?'Сценарий':'Текст содержания';
-  const ro=canEdit()?'':'disabled';
+  const isAdmin=DATA.user.role==='admin';
+  const lockedForMe=it.locked && !isAdmin;
+  const ro=(canEdit()&&!lockedForMe)?'':'disabled';
+  const lockBtn=isAdmin?`<button class="xbtn" data-tlock="${it.id}" title="${it.locked?'Разблокировать':'Заблокировать от редактирования'}">${it.locked?'🔓':'🔒'}</button>`:'';
+  const lockNotice=it.locked?`<div class="muted" style="color:#e5484d;margin-bottom:6px">🔒 Заблокировано админом${lockedForMe?' — редактировать нельзя':''}</div>`:'';
+  const authorNotice=it.last_edited_by?`<div class="muted" style="font-size:12px;margin-bottom:6px">✍️ Последним сохранил: ${esc(it.last_edited_by)}</div>`:'';
   return `<div class="card">
-    <div class="row"><h3>Пункт #${it.idx}</h3><button class="btn sm sec" data-tclose>← назад</button></div>
+    <div class="row"><h3>Пункт #${it.idx}</h3><div style="display:flex;gap:6px">${lockBtn}<button class="btn sm sec" data-tclose>← назад</button></div></div>
+    ${lockNotice}${authorNotice}
     <div class="muted">№ позиция (перенести на другой номер):</div><input id="f_pos" value="${it.idx}" inputmode="numeric" style="max-width:130px" ${ro}>
     <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
@@ -454,11 +460,11 @@ function renderItemDetail(){
       ${it.type==='video'?`<div style="flex:1"><div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}</div>`:''}
       <div style="flex:1"><div class="muted">Дедлайн:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}</div></div>
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
-    ${canEdit()?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
+    ${canEdit()&&!lockedForMe?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
     ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 ${it.ai_tz?'Пересоздать':'Сгенерировать'} раскадровку монтажа (AI)</button>
     ${renderAiTzBlock(it)}`:''}
-    <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:''}
+    <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:(it.type==='video'?renderAiTzBlock(it):'')}
   </div>`;
 }
 
@@ -1071,7 +1077,8 @@ function bind(){
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
+  document.querySelectorAll('[data-tlock]').forEach(b=>b.onclick=()=>act({type:'item_lock',id:+b.dataset.tlock,planId:TBL_PLAN}));
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;} if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
   const tzsend=document.querySelector('[data-tzsend]'); if(tzsend) tzsend.onclick=()=>busyClick(tzsend, async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
@@ -1080,6 +1087,7 @@ function bind(){
     if(!deadline.trim()){tg.showAlert&&tg.showAlert('Укажи дедлайн — бот подставит его в ТЗ автоматически');return;}
     const fields={type:it.type,status:it.stage,lang:it.lang||'',theme,script,frames:it.frames||[],reference,props,shoot_date:it.type==='video'?val('f_shoot'):'',deadline};
     let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;}
     if(res&&res.items)TBL_ITEMS=res.items;
     const lines=[`Тема: ${theme}`,`${it.type==='video'?'Сценарий':'Текст'}: ${script}`];
     if(reference.trim()) lines.push(`Референс: ${reference}`);
@@ -1177,7 +1185,7 @@ function bind(){
   const dadd=document.querySelector('[data-daily-add]'); if(dadd) dadd.onclick=async()=>{const title=(val('dailyNew')||'').trim(); if(!title){tg.showAlert&&tg.showAlert('Впиши задачу');return;} await act({type:'daily_add',title,who:val('dailyWho')});};
   // пробел и прочие клавиши не должны перехватываться контейнером Telegram
   document.querySelectorAll('input,textarea').forEach(el=>{el.addEventListener('keydown',e=>e.stopPropagation());el.addEventListener('keypress',e=>e.stopPropagation());});
-  document.querySelectorAll('[data-dl]').forEach(inp=>inp.onchange=async()=>{const res=await api('POST',{type:'item_patch',id:+inp.dataset.dl,planId:TBL_PLAN,patch:{deadline:inp.value}}); if(res&&res.items)TBL_ITEMS=res.items;});
+  document.querySelectorAll('[data-dl]').forEach(inp=>inp.onchange=async()=>{const res=await api('POST',{type:'item_patch',id:+inp.dataset.dl,planId:TBL_PLAN,patch:{deadline:inp.value}}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);} if(res&&res.items){TBL_ITEMS=res.items;render();}});
   const tdel=document.querySelector('[data-tdel]'); if(tdel) tdel.onclick=()=>{const del=async()=>{const res=await api('POST',{type:'item_delete',id:TBL_OPEN,planId:TBL_PLAN}); if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();}; if(tg.showConfirm){tg.showConfirm('Удалить пункт?',(ok)=>{if(ok)del();});}else del();};
 }
 
