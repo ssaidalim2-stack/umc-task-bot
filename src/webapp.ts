@@ -342,7 +342,7 @@ export async function getData(userId: number) {
     user: { id: userId, name: member?.name || "", role, is_admin: isAdmin },
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
-    myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },

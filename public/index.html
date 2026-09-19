@@ -480,9 +480,24 @@ function renderVideo(){
 
 function prog(label,done,total){ return `<div class="muted">${label}: <b>${done}/${total}</b></div>${bar(done,total)}`; }
 
+// null, если дедлайн ещё не близко; иначе метка срочности для баннера на Главной
+function urgencyInfo(deadlineIso){
+  if(!deadlineIso) return null;
+  const diff=new Date(deadlineIso).getTime()-Date.now();
+  if(diff<=0) return {level:'overdue',text:'⛔ просрочено'};
+  if(diff<=24*3600*1000) return {level:'soon',text:'через '+Math.max(1,Math.round(diff/3600000))+' ч'};
+  return null;
+}
 function renderHome(){
   const u=DATA.user, st=DATA.stats;
   let h=`<div class="card"><h3>👋 Привет, ${esc(u.name||'')}</h3><div class="muted">${roleLabel(u.role)}${DATA.period?' · '+esc(DATA.period):''}</div></div>`;
+
+  const urgent=(DATA.myTasks||[]).map(t=>({...t,u:urgencyInfo(t.deadline)})).filter(t=>t.u).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline));
+  if(urgent.length){
+    h+=`<div class="card" style="border:1px solid #e5484d"><h3>⏰ Горящие дедлайны</h3>
+      ${urgent.map(t=>`<div class="vid"><span style="min-width:0">${esc(t.title)}</span><span class="badge" style="background:${t.u.level==='overdue'?'#e5484d':'#f5a524'};color:#fff">${t.u.text}</span></div>`).join('')}
+    </div>`;
+  }
 
   h+=`<div class="card"><div class="row"><h3>✅ Мои задачи</h3><span class="chip">${DATA.myTasks.length}</span></div>`;
   h+= DATA.myTasks.length ? DATA.myTasks.slice(0,6).map(t=>`<div class="vid"><span>${esc(t.title)}</span></div>`).join('') : '<div class="muted">Активных задач нет 🎉</div>';
@@ -723,6 +738,13 @@ function renderSubs(){
 }
 
 function renderWork(){
+  if(DATA.user.role!=='admin'){
+    const my=DATA.myTasks||[];
+    let h='<div class="card"><h3>🗂️ Моя работа</h3>';
+    h+= my.length ? my.map(t=>`<div class="vid"><span>${esc(t.title)}</span><button class="btn sm" data-done="${t.id}">Выполнено</button></div>`).join('') : '<div class="muted">Активных задач нет 🎉</div>';
+    h+='</div>';
+    return h;
+  }
   const team=DATA.team||[];
   if(WORK_EMP>=team.length) WORK_EMP=0;
   const chips=team.map((m,i)=>`<div class="pill ${i==WORK_EMP?'active':''}" data-emp="${i}">${esc(m.name)}</div>`).join('');
@@ -763,10 +785,12 @@ function renderTZ(){
     : '<div class="muted" style="font-size:12px">Нет сотрудника с этой ролью — назначь роль во вкладке «Команда».</div>';
   const projPills=`<div class="pill ${TZ_PROJ===''?'active':''}" data-tzp="">Общее</div>`+DATA.projects.map(p=>`<div class="pill ${TZ_PROJ==p.id?'active':''}" data-tzp="${p.id}">${esc(p.name)}</div>`).join('');
   const fields=(TZ_TEMPLATES[TZ_SEC]||[]).map(([id,label,big])=>{
-    const v=esc(TZ_FIELDS[id]||'');
+    const v=TZ_FIELDS[id]||'';
+    if(id==='deadline') return `<div class="muted">${label}:</div>${pickerPair('tz_'+id,v,'ДД.ММ или ДД.ММ ЧЧ:ММ',true,'')}`;
+    if(id==='shoot') return `<div class="muted">${label}:</div>${pickerPair('tz_'+id,v,'ДД.ММ',false,'')}`;
     return big
-      ? `<div class="muted">${label}:</div><textarea id="tz_${id}" style="min-height:60px">${v}</textarea>`
-      : `<div class="muted">${label}:</div><input id="tz_${id}" value="${v}">`;
+      ? `<div class="muted">${label}:</div><textarea id="tz_${id}" style="min-height:60px">${esc(v)}</textarea>`
+      : `<div class="muted">${label}:</div><input id="tz_${id}" value="${esc(v)}">`;
   }).join('');
   let itemPicker='';
   if(TZ_SEC==='video' && TZ_PROJ){
