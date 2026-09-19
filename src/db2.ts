@@ -189,6 +189,31 @@ export async function getMemberTabsBulk(ids: number[]): Promise<Record<number, s
   return out;
 }
 
+// ---------- личная группа сотрудника (ТЗ и напоминания дублируются туда) ----------
+// привязывается командой /bindperson внутри самой группы — так chat_id берётся из Telegram,
+// а не вводится вручную (админ его всё равно не знает)
+export async function getMemberGroup(telegramId: number): Promise<number | null> {
+  const raw = await getSetting(`member_group:${telegramId}`);
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isNaN(n) ? null : n;
+}
+export async function setMemberGroup(telegramId: number, chatId: number | null): Promise<void> {
+  if (chatId == null) await supabase.from("app_settings").delete().eq("key", `member_group:${telegramId}`);
+  else await setSetting(`member_group:${telegramId}`, String(chatId));
+}
+export async function getMemberGroupsBulk(ids: number[]): Promise<Record<number, number>> {
+  if (!ids.length) return {};
+  const keys = ids.map((id) => `member_group:${id}`);
+  const { data } = await supabase.from("app_settings").select("key,value").in("key", keys);
+  const out: Record<number, number> = {};
+  for (const r of (data as any[]) ?? []) {
+    const id = +String(r.key).split(":")[1];
+    const chatId = parseInt(r.value, 10);
+    if (!Number.isNaN(chatId)) out[id] = chatId;
+  }
+  return out;
+}
+
 // ---------- tasks (v2) ----------
 export interface TaskRow {
   id: number; title: string; assignee_id: number | null; assignee_name: string | null;

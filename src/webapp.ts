@@ -309,7 +309,8 @@ export async function getData(userId: number) {
       specialists[sec] = members.filter((m) => db.memberRoleList(m).includes(cfg.roleKey)).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
     }
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
-    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null }));
+    const groupsBulk = await d2.getMemberGroupsBulk(members.map((m) => m.telegram_id));
+    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
@@ -548,6 +549,11 @@ export async function doAction(userId: number, action: any) {
       await d2.removeMember(target);
       return getData(userId);
     }
+    case "team_unbind_group": {
+      if (role !== "admin") return { error: "нет доступа" };
+      await d2.setMemberGroup(+action.id, null);
+      return getData(userId);
+    }
     case "team_set_tabs": {
       if (role !== "admin") return { error: "нет доступа" };
       const target = +action.id;
@@ -618,7 +624,11 @@ export async function doAction(userId: number, action: any) {
       const dlTxt = dl ? `\n⏰ Дедлайн: ${String(action.deadline).trim()}` : "";
       const msg = `📋 Новое ТЗ (${sec.label})${proj ? " — " + proj.name : ""} от ${member?.name || "менеджера"}:\n\n${text}${dlTxt}`;
       const photoBuf = parseDataUrlImage(action.photo);
-      if (specialist) { try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {} }
+      if (specialist) {
+        try { await sendTzMessage(specialist.telegram_id, msg, photoBuf); } catch {}
+        const personalGroup = await d2.getMemberGroup(specialist.telegram_id);
+        if (personalGroup) { try { await sendTzMessage(personalGroup, msg, photoBuf); } catch {} }
+      }
       for (const b of await d2.bindingsFor(projectId, sec.specialty)) { try { await sendTzMessage(b.chat_id, msg, photoBuf); } catch {} }
       break;
     }

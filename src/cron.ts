@@ -67,16 +67,21 @@ async function deadlineReminders(now: number): Promise<number> {
     const diff = dl - now;
     const assignee = await db.getMember(task.assignee_id);
     const lang = langOf(assignee);
+    const personalGroup = await d2.getMemberGroup(task.assignee_id);
+    const alsoToGroup = async (msg: string) => { if (personalGroup) { try { await bot.api.sendMessage(personalGroup, msg); } catch {} } };
     if (diff <= 0 && !task.reminded_overdue) {
-      await safeSend(task.assignee_id, t(lang, "remind_overdue_assignee", { id: task.id, title: task.title }));
+      const msg = t(lang, "remind_overdue_assignee", { id: task.id, title: task.title });
+      await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
       for (const a of await db.listAdmins())
         await safeSend(a.telegram_id, t(langOf(a), "remind_overdue_admin", { id: task.id, title: task.title, assignee: assignee?.name || String(task.assignee_id) }));
       await db.markReminded(task.id, "reminded_overdue"); sent++;
     } else if (diff > 0 && diff <= HOUR && !task.reminded_1h) {
-      await safeSend(task.assignee_id, t(lang, "remind_1h", { id: task.id, title: task.title }));
+      const msg = t(lang, "remind_1h", { id: task.id, title: task.title });
+      await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
       await db.markReminded(task.id, "reminded_1h"); sent++;
     } else if (diff > HOUR && diff <= 24 * HOUR && !task.reminded_24h) {
-      await safeSend(task.assignee_id, t(lang, "remind_24h", { id: task.id, title: task.title }));
+      const msg = t(lang, "remind_24h", { id: task.id, title: task.title });
+      await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
       await db.markReminded(task.id, "reminded_24h"); sent++;
     }
   }

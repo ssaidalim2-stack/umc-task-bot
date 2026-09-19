@@ -188,6 +188,21 @@ export function registerV2(bot: Bot) {
     await ctx.reply(`✅ Группа привязана: ${projName} (раздел: ${spec}). Сюда будут приходить ТЗ и уведомления по этому разделу.`);
   });
 
+  // личная группа конкретного человека (например, персональный чат с монтажёром) —
+  // его ТЗ и напоминания о дедлайнах будут дублироваться сюда в дополнение к личке
+  bot.command("bindperson", async (ctx) => {
+    if (ctx.chat.type === "private") return ctx.reply("Эту команду используй В ГРУППЕ этого человека.\nФормат: /bindperson <имя или telegram_id>");
+    const m = await db.getMember(ctx.from!.id);
+    if (!isAdmin(m, ctx.from!.id)) return ctx.reply("⛔ Только админ может привязать группу.");
+    const arg = (ctx.match as string).trim();
+    if (!arg) return ctx.reply("Формат: /bindperson <имя или telegram_id>\nПример: /bindperson Асрор");
+    let target: db.Member | null = /^\d+$/.test(arg) ? await db.getMember(+arg) : null;
+    if (!target) target = await d2.resolveMember(arg);
+    if (!target) return ctx.reply("Не нашёл такого человека. Он должен хотя бы раз открыть бота (/start) — либо укажи его telegram_id.");
+    await d2.setMemberGroup(target.telegram_id, ctx.chat.id);
+    await ctx.reply(`✅ Эта группа привязана к ${target.name || target.username || target.telegram_id}. Сюда будут дублироваться его ТЗ и напоминания о дедлайнах.`);
+  });
+
   // ----- приём файла готовой работы -----
   bot.on(["message:document", "message:video", "message:photo", "message:audio", "message:voice", "message:video_note"], async (ctx) => {
     if (ctx.chat.type !== "private") return;
