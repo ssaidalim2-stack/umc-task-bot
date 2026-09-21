@@ -34,15 +34,15 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
-  manager: ["home", "board", "tasks", "tz", "plan", "work", "analytics", "report"],
+  admin: ["home", "board", "tasks", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
+  manager: ["home", "board", "tasks", "tz", "plan", "calendar", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
   designer: ["home", "mywork", "tasks"],
   sales: ["home", "sales"],
   member: ["home", "tasks"],
 };
-const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
+const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -140,13 +140,33 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
 }
 async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin: boolean): Promise<boolean> {
   if (isAdmin) return true;
   const customTabs = await d2.getMemberTabs(userId);
   if (customTabs) return customTabs.includes("sales");
   return db.memberRoleList(member).includes("sales");
+}
+// съёмки для календаря — читаются напрямую из shoot_date/shoot_time/shoot_manager
+// пунктов контент-плана (video), а не отдельной таблицей, чтобы календарь и таблица
+// всегда показывали одно и то же
+async function buildCalendarData() {
+  const [items, projects, members] = await Promise.all([d2.getAllItems(), d2.getActiveProjects(), db.listMembers()]);
+  const projectNameById = new Map(projects.map((p) => [p.id, p.name]));
+  const calendarShoots = items
+    .filter((it) => it.type === "video")
+    .map((it) => {
+      const d = parseItemData((it as any).title);
+      const day = parseShootDay(d.shoot_date);
+      if (!day) return null;
+      return { id: it.id, planId: it.plan_id, projectId: it.project_id, projectName: projectNameById.get(it.project_id) || "", theme: d.theme || "", format: (it as any).format || "", stage: it.stage, day, shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "" };
+    })
+    .filter(Boolean);
+  const calendarManagers = members
+    .filter((m) => db.memberRoleList(m).includes("manager") || isAdminId(m, m.telegram_id))
+    .map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
+  return { calendarShoots, calendarManagers };
 }
 async function serializeLeads() {
   const leads = await d2.listSalesLeads();
@@ -315,6 +335,7 @@ export async function getData(userId: number) {
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
   const salesLeads = tabs.includes("sales") ? await serializeLeads() : [];
+  const calendarExtra = tabs.includes("calendar") ? await buildCalendarData() : { calendarShoots: [], calendarManagers: [] };
 
   let myWork: any[] = [];
   if (role === "videographer" || role === "editor" || role === "designer") {
@@ -344,6 +365,7 @@ export async function getData(userId: number) {
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
+    ...calendarExtra,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
@@ -694,8 +716,9 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
       const patch: any = { title: JSON.stringify(data) };
+      if (f.format !== undefined) patch.format = f.format || null;
       if (f.type) patch.type = f.type;
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
       else if (item0 && item0.type === "video" && item0.stage === "idea" && scriptTxt.trim()) patch.stage = "script"; // сценарий заполнен → авто-переход в готовый формат
@@ -707,18 +730,24 @@ export async function doAction(userId: number, action: any) {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const it = await d2.getItem(+action.id);
       if (!it) return { items: [] };
+      const planId = action.planId ? +action.planId : it.plan_id; // календарь вызывает это вне контекста открытого периода
       const d = parseItemData((it as any).title);
-      if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
+      if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const p = action.patch || {};
-      for (const k of ["theme", "script", "reference", "props", "shoot_date", "deadline"]) if (k in p) (d as any)[k] = p[k];
+      for (const k of ["theme", "script", "reference", "props", "shoot_date", "shoot_time", "shoot_manager", "deadline"]) if (k in p) (d as any)[k] = p[k];
       d.last_edited_by = member?.name || String(userId);
       const patch: any = { title: JSON.stringify(d) };
+      if (p.format !== undefined) patch.format = p.format || null;
       if (p.type) patch.type = p.type;
       if (p.status) { patch.stage = p.status; patch.status = p.status === "published" || p.status === "done" ? "done" : "in_progress"; }
       else if (it.type === "video" && it.stage === "idea" && "script" in p && String(p.script || "").trim()) patch.stage = "script";
       await d2.updateItem(+action.id, patch);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
-      return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
+      return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
+    }
+    case "calendar_shoots": {
+      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      return await buildCalendarData();
     }
     case "item_lock": {
       if (role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };

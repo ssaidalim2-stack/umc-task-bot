@@ -58,6 +58,17 @@
   .msheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--bg);border-radius:20px 20px 0 0;padding:16px 14px calc(58px + env(safe-area-inset-bottom));box-shadow:0 -8px 36px rgba(0,0,0,.35)}
   .msheet-title{font-size:15px;font-weight:800;margin-bottom:12px}
   .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
+  .calwd{text-align:center;font-size:11px;opacity:.6;padding:2px 0}
+  .calcell{aspect-ratio:1/1;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:transform .1s ease}
+  .calcell:active{transform:scale(.94)}
+  .calcell.empty{cursor:default;background:transparent!important}
+  .calcell.today .calnum{text-decoration:underline}
+  .calcell.sel{box-shadow:inset 0 0 0 2px #fff}
+  .calcell.has-shoot{box-shadow:inset 0 0 0 2px #f5a524}
+  .calcell.has-shoot.sel{box-shadow:inset 0 0 0 2px #f5a524, inset 0 0 0 4px #fff}
+  .calnum{font-weight:600}
+  .caldot{font-size:10px;margin-top:1px}
   .mcell{display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 4px;border-radius:14px;background:var(--card);font-size:11px;font-weight:600;cursor:pointer;text-align:center;border:1px solid var(--line);transition:transform .1s ease}
   .mcell:active{transform:scale(.95)}
   .mcell span{font-size:23px}
@@ -151,6 +162,8 @@ function STATUS_OPTS(type){ return type==='video'
   : [["todo","🕒 В работе"],["done","✅ Готово"]]; }
 function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
 const LANG_OPTS=[["ru","🇷🇺 Рус"],["uz","🇺🇿 Узб"],["en","🇬🇧 Англ"]];
+const FORMAT_OPTS=[["sell","💰 Продажный"],["fun","🎉 Развлекательный"],["info","📘 Информативный"],["atmo","🌙 Атмосферный"]];
+function formatLabel(f){ const o=FORMAT_OPTS.find(x=>x[0]===f); return o?o[1]:''; }
 const LANG_SHORT={ru:"РУС",uz:"УЗБ",en:"ENG"};
 function frameLabel(fr,n){ return fr.kind==='hook'?'🎬 Visual hook':fr.kind==='cta'?'📣 CTA — призыв':('🎞 Кадр '+n); }
 // миграция старого формата (rows[]) в единый непрерывный текст кадра
@@ -203,7 +216,7 @@ const TABMETA={
   home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
   subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"}, team:{ic:"👥",t:"Команда"}, projects:{ic:"🗂",t:"Проекты"},
-  sales:{ic:"💼",t:"Отдел продаж"},
+  sales:{ic:"💼",t:"Отдел продаж"}, calendar:{ic:"📅",t:"Календарь"},
 };
 // ---- аналитика (Meta) ----
 let AN_SEC='ads', AN_PROJ=null, AN_SINCE=null, AN_UNTIL=null, AN_DATA=null, AN_LOADING=false, AN_ERR=null;
@@ -306,7 +319,7 @@ function render(){
   const activeId=active&&active.id;
   const selStart=active&&typeof active.selectionStart==='number'?active.selectionStart:null;
   const selEnd=active&&typeof active.selectionEnd==='number'?active.selectionEnd:null;
-  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
@@ -423,6 +436,14 @@ function parseAiTz(raw){
   return {head:headLine,cols,data};
 }
 function cellHtml(v){ return esc(v||'').replace(/&lt;br&gt;/gi,'<br>').replace(/&lt;br\/&gt;/gi,'<br>'); }
+// то же, что рендерится карточками на экране, но плоским читаемым текстом — для копирования
+// (сырой markdown с | и --- нечитаем при вставке в Telegram/куда угодно ещё)
+function formatAiTzPlain(raw){
+  const parsed=parseAiTz(raw);
+  if(!parsed||!parsed.data.length) return raw;
+  const blocks=parsed.data.map(row=>parsed.cols.map((c,ci)=>row[ci]?`${c}: ${row[ci].replace(/<br\s*\/?>/gi,' / ')}`:'').filter(Boolean).join('\n'));
+  return (parsed.head?parsed.head+'\n\n':'')+blocks.join('\n\n');
+}
 function renderAiTzBlock(it){
   if(!it.ai_tz) return '';
   const parsed=parseAiTz(it.ai_tz);
@@ -452,6 +473,7 @@ function renderItemDetail(){
     <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
     <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${it.lang==k?'active':''}" data-tlang="${k}">${l}</div>`).join('')}</div>
+    <div class="muted">Формат:</div><div class="pills">${FORMAT_OPTS.map(([k,l])=>`<div class="pill ${it.format==k?'active':''}" data-tformat="${k}">${l}</div>`).join('')}</div>
     <div class="row"><div class="muted">${scriptLabel}:</div><button class="xbtn" data-copyscript>📋 Копировать</button></div>
     ${it.type==='video'?renderFrames(it):`<textarea id="f_script" ${ro}>${esc(it.script)}</textarea>`}
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
@@ -822,10 +844,10 @@ function renderTZ(){
 
 const ROLE_OPTS_TEAM=[["manager","Менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
 const ROLE_LABEL_TEAM={admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"};
-const ALL_TABS_FRONT=["home","board","tasks","tz","plan","video","work","analytics","report","subs","mywork","team","projects","sales"];
+const ALL_TABS_FRONT=["home","board","tasks","tz","plan","calendar","video","work","analytics","report","subs","mywork","team","projects","sales"];
 const TABS_BY_ROLE_FRONT={
-  admin:["home","board","tasks","tz","plan","video","work","analytics","report","subs","team","projects","sales"],
-  manager:["home","board","tasks","tz","plan","work","analytics","report"],
+  admin:["home","board","tasks","tz","plan","calendar","video","work","analytics","report","subs","team","projects","sales"],
+  manager:["home","board","tasks","tz","plan","calendar","work","analytics","report"],
   videographer:["home","mywork","tasks"], editor:["home","mywork","tasks"], designer:["home","mywork","tasks"],
   sales:["home","sales"],
   member:["home","tasks"],
@@ -935,6 +957,97 @@ function renderSalesDetail(){
     ${!isNew?'<button class="btn sm sec full" data-salesdel style="margin-top:6px">🗑 Удалить</button>':''}
   </div>`;
 }
+// ---- календарь съёмок (циклы 15→15, читает/пишет те же shoot_date/shoot_time/shoot_manager,
+// что и таблица контент-плана — единый источник данных, календарь просто другой вид) ----
+let CAL_CURSOR=null, CAL_DAY=null, CAL_ADD=false;
+let CAL_ADD_PROJ=null, CAL_ADD_ITEMS=null, CAL_ADD_ITEM=null, CAL_ADD_MANAGER=null, CAL_ADD_TIME='', CAL_ADD_PROPS='';
+const CAL_WD=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+const MONTH_NAMES=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+function isoKey(y,m,day){ return `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`; }
+// якорим на Ташкент (+5), а не на локаль устройства зрителя — иначе граница дня "плывёт"
+function tashkentNow(){ return new Date(Date.now()+5*3600*1000); }
+function calCycleStart(d){ let y=d.getUTCFullYear(), m=d.getUTCMonth(); if(d.getUTCDate()<15){ m--; if(m<0){m=11;y--;} } return {y,m}; }
+function monthColor(m){ return `hsl(${m*30},32%,17%)`; }
+function renderCalendar(){
+  if(!CAL_CURSOR) CAL_CURSOR=calCycleStart(tashkentNow());
+  const {y,m}=CAL_CURSOR;
+  const endM=m===11?0:m+1, endY=m===11?y+1:y;
+  const startUTC=Date.UTC(y,m,15), endUTC=Date.UTC(endY,endM,14);
+  const days=[];
+  for(let t=startUTC;t<=endUTC;t+=86400000){ const dt=new Date(t); days.push({y:dt.getUTCFullYear(),m:dt.getUTCMonth(),day:dt.getUTCDate(),wd:dt.getUTCDay()}); }
+  const shootsByDay={};
+  (DATA.calendarShoots||[]).forEach(s=>{ (shootsByDay[s.day]=shootsByDay[s.day]||[]).push(s); });
+  const nowT=tashkentNow();
+  const todayKey=isoKey(nowT.getUTCFullYear(),nowT.getUTCMonth(),nowT.getUTCDate());
+  const leadBlank=(days[0].wd+6)%7; // неделя с понедельника
+  const cells=[]; for(let i=0;i<leadBlank;i++) cells.push(null); days.forEach(d=>cells.push(d));
+  while(cells.length%7) cells.push(null);
+  const cellsHtml=cells.map(d=>{
+    if(!d) return '<div class="calcell empty"></div>';
+    const key=isoKey(d.y,d.m,d.day);
+    const shoots=shootsByDay[key]||[];
+    const cls=['calcell']; if(shoots.length) cls.push('has-shoot'); if(key===todayKey) cls.push('today'); if(key===CAL_DAY) cls.push('sel');
+    return `<div class="${cls.join(' ')}" data-calday="${key}" style="background:${monthColor(d.m)}">
+      <div class="calnum">${d.day}</div>
+      ${shoots.length?`<div class="caldot">🎬${shoots.length>1?' '+shoots.length:''}</div>`:''}
+    </div>`;
+  }).join('');
+  const label=`${MONTH_NAMES[m]} → ${MONTH_NAMES[endM]} (15.${String(m+1).padStart(2,'0')}–14.${String(endM+1).padStart(2,'0')})`;
+
+  let dayPanel='';
+  if(CAL_DAY){
+    const shoots=shootsByDay[CAL_DAY]||[];
+    const [dy,dm,dd]=CAL_DAY.split('-');
+    dayPanel=`<div class="card" style="margin-top:10px">
+      <div class="row"><h3>${dd}.${dm}.${dy}</h3><button class="btn sm sec" data-caldayclose>✕</button></div>
+      ${shoots.length?shoots.map(s=>`<div class="vid" style="align-items:flex-start">
+        <div style="min-width:0;flex:1">
+          <div><b>${esc(s.projectName)}</b>${s.format?' · '+formatLabel(s.format):''}</div>
+          <div class="muted" style="font-size:13px">${esc(s.theme||'без темы')}</div>
+          <div class="muted" style="font-size:12px">${s.shoot_time?'🕒 '+esc(s.shoot_time)+' · ':''}${s.shoot_manager?'👤 '+esc(s.shoot_manager):'менеджер не назначен'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;flex:0 0 auto">
+          <button class="xbtn" data-caljump="${s.id}:${s.projectId}:${s.planId}">Открыть →</button>
+          <button class="xbtn" data-calclear="${s.id}" title="Убрать со съёмки">✕ дата</button>
+        </div>
+      </div>`).join(''):'<div class="muted">Съёмок не назначено</div>'}
+      ${CAL_ADD?renderCalAddForm():`<button class="btn sm full" data-caladdopen style="margin-top:8px">＋ Назначить съёмку</button>`}
+    </div>`;
+  }
+
+  return `<div class="card">
+    <div class="row"><button class="btn sm sec" data-calprev>◀</button><h3 style="text-align:center;flex:1">${label}</h3><button class="btn sm sec" data-calnext>▶</button></div>
+    <div class="calgrid">${CAL_WD.map(w=>`<div class="calwd">${w}</div>`).join('')}${cellsHtml}</div>
+  </div>${dayPanel}`;
+}
+function renderCalAddForm(){
+  const projPills=(DATA.projects||[]).map(p=>`<div class="pill ${CAL_ADD_PROJ==p.id?'active':''}" data-caladdproj="${p.id}">${esc(p.name)}</div>`).join('');
+  let itemPicker='';
+  if(CAL_ADD_PROJ){
+    const items=CAL_ADD_ITEMS;
+    itemPicker=`<div class="muted" style="margin-top:6px">Сценарий из контент-плана:</div><div class="pills">${
+      items===null?'<div class="muted" style="font-size:12px">Загрузка…</div>'
+      :items.length?items.map(it=>`<div class="pill ${CAL_ADD_ITEM==it.id?'active':''}" data-caladditem="${it.id}">#${it.idx}${it.theme?': '+esc(it.theme.slice(0,20)):''}</div>`).join('')
+      :'<div class="muted" style="font-size:12px">В активном периоде этого проекта нет видео</div>'
+    }</div>`;
+  }
+  const mgrPills=(DATA.calendarManagers||[]).map(mm=>`<div class="pill ${CAL_ADD_MANAGER==mm.id?'active':''}" data-caladdmgr="${mm.id}">${esc(mm.name)}</div>`).join('');
+  return `<div class="card" style="margin-top:8px">
+    <div class="muted">Проект:</div><div class="pills">${projPills}</div>
+    ${itemPicker}
+    <div class="muted" style="margin-top:6px">Менеджер на съёмке:</div><div class="pills">${mgrPills||'<div class="muted" style="font-size:12px">Нет менеджеров в команде</div>'}</div>
+    <div class="muted" style="margin-top:6px">Время:</div><input type="time" id="caladd_time" value="${esc(CAL_ADD_TIME)}">
+    <div class="muted" style="margin-top:6px">Реквизиты (необязательно — пусто = не менять уже сохранённые):</div><textarea id="caladd_props" style="min-height:52px">${esc(CAL_ADD_PROPS)}</textarea>
+    <div class="row" style="gap:6px;margin-top:8px">
+      <button class="btn sm" data-caladdsave>💾 Назначить</button>
+      <button class="btn sm sec" data-caladdcancel>Отмена</button>
+    </div>
+  </div>`;
+}
+async function calRefresh(){
+  const fresh=await api('POST',{type:'calendar_shoots'});
+  if(fresh&&fresh.calendarShoots){DATA.calendarShoots=fresh.calendarShoots;DATA.calendarManagers=fresh.calendarManagers;}
+}
 function renderMyWork(){
   const w=DATA.myWork||[];
   if(!w.length) return '<div class="card"><h3>🗂️ Моя работа</h3><div class="muted">Сейчас нет элементов на твоём этапе 🎉</div></div>';
@@ -948,6 +1061,46 @@ function renderMyWork(){
 function autoGrow(t){ t.style.height='auto'; t.style.height=(t.scrollHeight+2)+'px'; }
 function bind(){
   document.querySelectorAll('textarea').forEach(t=>{ autoGrow(t); t.oninput=()=>autoGrow(t); });
+  document.querySelectorAll('[data-calprev]').forEach(b=>b.onclick=()=>{ let{y,m}=CAL_CURSOR; m--; if(m<0){m=11;y--;} CAL_CURSOR={y,m}; CAL_DAY=null; CAL_ADD=false; render(); });
+  document.querySelectorAll('[data-calnext]').forEach(b=>b.onclick=()=>{ let{y,m}=CAL_CURSOR; m++; if(m>11){m=0;y++;} CAL_CURSOR={y,m}; CAL_DAY=null; CAL_ADD=false; render(); });
+  document.querySelectorAll('[data-calday]').forEach(c=>c.onclick=()=>{ CAL_DAY=(CAL_DAY===c.dataset.calday?null:c.dataset.calday); CAL_ADD=false; render(); });
+  const caldayclose=document.querySelector('[data-caldayclose]'); if(caldayclose) caldayclose.onclick=()=>{CAL_DAY=null;CAL_ADD=false;render();};
+  const caladdopen=document.querySelector('[data-caladdopen]'); if(caladdopen) caladdopen.onclick=()=>{CAL_ADD=true;CAL_ADD_PROJ=null;CAL_ADD_ITEMS=null;CAL_ADD_ITEM=null;CAL_ADD_MANAGER=null;CAL_ADD_TIME='';CAL_ADD_PROPS='';render();};
+  const caladdcancel=document.querySelector('[data-caladdcancel]'); if(caladdcancel) caladdcancel.onclick=()=>{CAL_ADD=false;render();};
+  document.querySelectorAll('[data-caladdproj]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    CAL_ADD_PROJ=+b.dataset.caladdproj; CAL_ADD_ITEM=null; CAL_ADD_ITEMS=null; render();
+    const res=await api('POST',{type:'plan_active_items',projectId:CAL_ADD_PROJ});
+    CAL_ADD_ITEMS=(res&&res.items)||[]; render();
+  }));
+  document.querySelectorAll('[data-caladditem]').forEach(b=>b.onclick=()=>{CAL_ADD_ITEM=+b.dataset.caladditem;render();});
+  document.querySelectorAll('[data-caladdmgr]').forEach(b=>b.onclick=()=>{const id=+b.dataset.caladdmgr;CAL_ADD_MANAGER=(CAL_ADD_MANAGER===id?null:id);render();});
+  const caladdsave=document.querySelector('[data-caladdsave]'); if(caladdsave) caladdsave.onclick=()=>busyClick(caladdsave, async()=>{
+    if(!CAL_ADD_ITEM){tg.showAlert&&tg.showAlert('Выбери сценарий из контент-плана');return;}
+    const[y,m,dd]=CAL_DAY.split('-');
+    const shoot_date=`${dd}.${m}.${y}`;
+    const mgr=(DATA.calendarManagers||[]).find(x=>x.id===CAL_ADD_MANAGER);
+    const time=val('caladd_time'), props=val('caladd_props');
+    const patch={shoot_date,shoot_time:time||''}; if(mgr) patch.shoot_manager=mgr.name; if(props.trim()) patch.props=props.trim();
+    const res=await api('POST',{type:'item_patch',id:CAL_ADD_ITEM,patch});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    CAL_ADD=false;
+    await calRefresh(); render();
+    tg.showAlert&&tg.showAlert('Съёмка назначена ✅');
+  });
+  document.querySelectorAll('[data-calclear]').forEach(b=>b.onclick=()=>{
+    const run=()=>busyClick(b, async()=>{
+      const res=await api('POST',{type:'item_patch',id:+b.dataset.calclear,patch:{shoot_date:''}});
+      if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+      await calRefresh(); render();
+    });
+    if(tg.showConfirm){tg.showConfirm('Убрать эту съёмку с календаря (дата очистится)?',(ok)=>{if(ok)run();});}else run();
+  });
+  document.querySelectorAll('[data-caljump]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const[itemId,projectId,planId]=b.dataset.caljump.split(':').map(Number);
+    const res=await api('POST',{type:'plan_items',planId});
+    TAB='plan'; TBL_PROJ=projectId; TBL_PLAN=planId; TBL_LOADED=planId; TBL_ITEMS=(res&&res.items)||[]; TBL_OPEN=itemId;
+    buildTabs(); render();
+  }));
   document.querySelectorAll('[data-tsel]').forEach(c=>c.onchange=()=>{
     const id=+c.dataset.tsel;
     if(c.checked) TBL_SELECTED.add(id); else TBL_SELECTED.delete(id);
@@ -1076,16 +1229,17 @@ function bind(){
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render();});
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render();});
+  document.querySelectorAll('[data-tformat]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.format=(it.format===b.dataset.tformat?'':b.dataset.tformat);} render();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
   document.querySelectorAll('[data-tlock]').forEach(b=>b.onclick=()=>act({type:'item_lock',id:+b.dataset.tlock,planId:TBL_PLAN}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;} if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme:val('f_theme'),script:it.script||'',frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:val('f_shoot'),deadline:val('f_deadline')}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;} if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
   const tzsend=document.querySelector('[data-tzsend]'); if(tzsend) tzsend.onclick=()=>busyClick(tzsend, async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
     const theme=val('f_theme'), script=it.script||'', reference=val('f_reference'), props=val('f_props'), deadline=val('f_deadline');
     if(!theme.trim()||!script.trim()){tg.showAlert&&tg.showAlert('Заполни тему и текст/сценарий перед отправкой ТЗ');return;}
     if(!deadline.trim()){tg.showAlert&&tg.showAlert('Укажи дедлайн — бот подставит его в ТЗ автоматически');return;}
-    const fields={type:it.type,status:it.stage,lang:it.lang||'',theme,script,frames:it.frames||[],reference,props,shoot_date:it.type==='video'?val('f_shoot'):'',deadline};
+    const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme,script,frames:it.frames||[],reference,props,shoot_date:it.type==='video'?val('f_shoot'):'',deadline};
     let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;}
     if(res&&res.items)TBL_ITEMS=res.items;
@@ -1101,7 +1255,7 @@ function bind(){
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
     const script=it.script||'';
     if(!script.trim()){tg.showAlert&&tg.showAlert('Сначала заполни сценарий');return;}
-    const fields={type:it.type,status:it.stage,lang:it.lang||'',theme:val('f_theme'),script,frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:it.type==='video'?val('f_shoot'):'',deadline:val('f_deadline')};
+    const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme:val('f_theme'),script,frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),shoot_date:it.type==='video'?val('f_shoot'):'',deadline:val('f_deadline')};
     await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
     const prevTxt=airaska.textContent; airaska.textContent='⏳ Генерирую раскадровку…'; airaska.disabled=true;
     const res=await api('POST',{type:'item_ai_tz',id:it.id,planId:TBL_PLAN,script});
@@ -1112,7 +1266,7 @@ function bind(){
   };
   const aicopy=document.querySelector('[data-aicopy]'); if(aicopy) aicopy.onclick=async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it||!it.ai_tz) return;
-    const ok=await copyText(it.ai_tz); haptic();
+    const ok=await copyText(formatAiTzPlain(it.ai_tz)); haptic();
     tg.showAlert&&tg.showAlert(ok?'Скопировано в буфер ✅':'Не удалось скопировать');
   };
   // ---- редактор сценария по кадрам ----
