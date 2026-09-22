@@ -152,6 +152,11 @@ async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin:
 // съёмки для календаря — читаются напрямую из shoot_date/shoot_time/shoot_manager
 // пунктов контент-плана (video), а не отдельной таблицей, чтобы календарь и таблица
 // всегда показывали одно и то же
+async function calendarRestrictionFor(userId: number, member: db.Member | null, isAdmin: boolean): Promise<number[] | null> {
+  const roles = isAdmin ? ["admin"] : db.memberRoleList(member);
+  if (isAdmin || roles.includes("pm") || !roles.includes("manager")) return null;
+  return d2.getMemberProjects(userId);
+}
 async function buildCalendarData(restrictProjectIds?: number[] | null) {
   const [items, projects, members] = await Promise.all([d2.getAllItems(), d2.getActiveProjects(), db.listMembers()]);
   const visibleProjects = restrictProjectIds && restrictProjectIds.length ? projects.filter((p) => restrictProjectIds.includes(p.id)) : projects;
@@ -195,8 +200,7 @@ export async function getData(userId: number) {
 
   // обычный менеджер может быть привязан к конкретным проектам (видит только их);
   // admin и роль pm (project manager) всегда видят всё
-  const canSeeAllProjects = isAdmin || memberRoles.includes("pm");
-  const restrictedProjectIds = !canSeeAllProjects && memberRoles.includes("manager") ? await d2.getMemberProjects(userId) : null;
+  const restrictedProjectIds = await calendarRestrictionFor(userId, member, isAdmin);
   const visibleProjects = restrictedProjectIds && restrictedProjectIds.length ? projects.filter((p) => restrictedProjectIds.includes(p.id)) : projects;
 
   const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
@@ -764,8 +768,30 @@ export async function doAction(userId: number, action: any) {
     case "calendar_shoots": {
       const myRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
       if (!isAdmin && !myRoles.includes("manager") && !myRoles.includes("pm")) return { error: "нет доступа" };
-      const restrictIds = !isAdmin && !myRoles.includes("pm") ? await d2.getMemberProjects(userId) : null;
-      return await buildCalendarData(restrictIds);
+      return await buildCalendarData(await calendarRestrictionFor(userId, member, isAdmin));
+    }
+    // назначение съёмки — сразу на группу видео одного проекта (одна реальная съёмка = один
+    // менеджер/время на все ролики, а не по отдельности на каждый)
+    case "calendar_assign": {
+      const myRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
+      if (!isAdmin && !myRoles.includes("manager") && !myRoles.includes("pm")) return { error: "нет доступа" };
+      const itemIds: number[] = Array.isArray(action.itemIds) ? action.itemIds.map((n: any) => +n).filter((n: number) => !Number.isNaN(n)) : [];
+      if (!itemIds.length) return { error: "не выбрано ни одного видео" };
+      const shoot_date = String(action.shoot_date ?? "");
+      const shoot_time = String(action.shoot_time ?? "");
+      const shoot_manager = String(action.shoot_manager ?? "");
+      let skippedLocked = 0;
+      for (const id of itemIds) {
+        const it = await d2.getItem(id);
+        if (!it) continue;
+        const d = parseItemData((it as any).title);
+        if (d.locked && !isAdmin) { skippedLocked++; continue; }
+        d.shoot_date = shoot_date; d.shoot_time = shoot_time; d.shoot_manager = shoot_manager;
+        d.last_edited_by = member?.name || String(userId);
+        await d2.updateItem(id, { title: JSON.stringify(d) });
+      }
+      const result = await buildCalendarData(await calendarRestrictionFor(userId, member, isAdmin));
+      return { ...result, skippedLocked };
     }
     case "item_lock": {
       if (role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };

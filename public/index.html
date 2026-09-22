@@ -990,8 +990,8 @@ function renderSalesDetail(){
 // ---- календарь съёмок (циклы 15→15, читает/пишет те же shoot_date/shoot_time/shoot_manager,
 // что и таблица контент-плана — единый источник данных, календарь просто другой вид) ----
 let CAL_CURSOR=null, CAL_DAY=null, CAL_ADD=false;
-let CAL_ADD_PROJ=null, CAL_ADD_ITEMS=null, CAL_ADD_ITEM=null, CAL_ADD_MANAGER=null, CAL_ADD_TIME='', CAL_ADD_PROPS='';
-let CAL_EDIT_ID=null, CAL_EDIT_MGR=null;
+let CAL_ADD_PROJ=null, CAL_ADD_ITEMS=null, CAL_ADD_SEL=null, CAL_ADD_MANAGER=null, CAL_ADD_TIME='', CAL_ADD_EXISTING=[];
+let CAL_EDIT_PROJ=null, CAL_EDIT_MGR=null;
 const CAL_WD=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 const MONTH_NAMES=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
 function isoKey(y,m,day){ return `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`; }
@@ -1017,10 +1017,11 @@ function renderCalendar(){
     if(!d) return '<div class="calcell empty"></div>';
     const key=isoKey(d.y,d.m,d.day);
     const shoots=shootsByDay[key]||[];
+    const groupCount=new Set(shoots.map(s=>s.projectId)).size; // считаем съёмки (проекты), не видео по отдельности
     const cls=['calcell']; if(shoots.length) cls.push('has-shoot'); if(key===todayKey) cls.push('today'); if(key===CAL_DAY) cls.push('sel');
     return `<div class="${cls.join(' ')}" data-calday="${key}" style="background:${monthColor(d.m)}">
       <div class="calnum">${d.day}</div>
-      ${shoots.length?`<div class="caldot">🎬${shoots.length>1?' '+shoots.length:''}</div>`:''}
+      ${groupCount?`<div class="caldot">🎬${groupCount>1?' '+groupCount:''}</div>`:''}
     </div>`;
   }).join('');
   const label=`${MONTH_NAMES[m]} → ${MONTH_NAMES[endM]} (15.${String(m+1).padStart(2,'0')}–14.${String(endM+1).padStart(2,'0')})`;
@@ -1028,26 +1029,33 @@ function renderCalendar(){
   let dayPanel='';
   if(CAL_DAY){
     const shoots=shootsByDay[CAL_DAY]||[];
+    // одна реальная съёмка = один проект в этот день, а не по видео отдельно
+    const byProj={};
+    shoots.forEach(s=>{ (byProj[s.projectId]=byProj[s.projectId]||{projectId:s.projectId,projectName:s.projectName,items:[]}).items.push(s); });
+    const groups=Object.values(byProj);
     const [dy,dm,dd]=CAL_DAY.split('-');
     dayPanel=`<div class="card" style="margin-top:10px">
       <div class="row"><h3>${dd}.${dm}.${dy}</h3><button class="btn sm sec" data-caldayclose>✕</button></div>
-      ${shoots.length?shoots.map(s=>{
-        const editForm=CAL_EDIT_ID===s.id?`<div class="card" style="margin-top:6px;padding:10px">
+      ${groups.length?groups.map(g=>{
+        const first=g.items[0];
+        const editForm=CAL_EDIT_PROJ===g.projectId?`<div class="card" style="margin-top:6px;padding:10px">
           <div class="muted">Менеджер на съёмке:</div><div class="pills">${(DATA.calendarManagers||[]).map(mm=>`<div class="pill ${CAL_EDIT_MGR==mm.id?'active':''}" data-caleditmgr="${mm.id}">${esc(mm.name)}</div>`).join('')||'<div class="muted" style="font-size:12px">Нет менеджеров в команде</div>'}</div>
-          <div class="muted" style="margin-top:6px">Время:</div><input type="time" id="caledit_time" value="${esc(s.shoot_time||'')}">
-          <div class="row" style="gap:6px;margin-top:8px"><button class="btn xs" data-caleditsave="${s.id}">💾 Сохранить</button><button class="btn xs sec" data-caleditcancel>Отмена</button></div>
+          <div class="muted" style="margin-top:6px">Время:</div><input type="time" id="caledit_time" value="${esc(first.shoot_time||'')}">
+          <div class="row" style="gap:6px;margin-top:8px"><button class="btn xs" data-caleditsave="${g.projectId}">💾 Сохранить</button><button class="btn xs sec" data-caleditcancel>Отмена</button></div>
         </div>`:'';
+        const itemsList=g.items.map(s=>`<div class="muted" style="font-size:13px">• ${esc(s.theme||'без темы')}${s.format?' · '+formatLabel(s.format):''}</div>`).join('');
         return `<div class="vid" style="align-items:flex-start">
         <div style="min-width:0;flex:1">
-          <div><b>${esc(s.projectName)}</b>${s.format?' · '+formatLabel(s.format):''}</div>
-          <div class="muted" style="font-size:13px">${esc(s.theme||'без темы')}</div>
-          <div class="muted" style="font-size:12px">${s.shoot_time?'🕒 '+esc(s.shoot_time)+' · ':''}${s.shoot_manager?'👤 '+esc(s.shoot_manager):'менеджер не назначен'}</div>
+          <div><b>${esc(g.projectName)}</b> <span class="muted" style="font-size:12px">(${g.items.length} видео)</span></div>
+          ${itemsList}
+          <div class="muted" style="font-size:12px;margin-top:2px">${first.shoot_time?'🕒 '+esc(first.shoot_time)+' · ':''}${first.shoot_manager?'👤 '+esc(first.shoot_manager):'менеджер не назначен'}</div>
           ${editForm}
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;flex:0 0 auto">
-          <button class="xbtn" data-caledittoggle="${s.id}" title="Менеджер/время">✎</button>
-          <button class="xbtn" data-caljump="${s.id}:${s.projectId}:${s.planId}">Открыть →</button>
-          <button class="xbtn" data-calclear="${s.id}" title="Убрать со съёмки">✕ дата</button>
+          <button class="xbtn" data-caledittoggle="${g.projectId}" title="Менеджер/время">✎</button>
+          <button class="xbtn" data-caladdmore="${g.projectId}" title="Добавить ещё видео в эту съёмку">＋видео</button>
+          <button class="xbtn" data-caljump="${first.id}:${first.projectId}:${first.planId}">Открыть →</button>
+          <button class="xbtn" data-calcleargroup="${g.items.map(s=>s.id).join(',')}" title="Убрать всю съёмку">✕ дата</button>
         </div>
       </div>`;
       }).join(''):'<div class="muted">Съёмок не назначено</div>'}
@@ -1061,23 +1069,24 @@ function renderCalendar(){
   </div>${dayPanel}`;
 }
 function renderCalAddForm(){
+  const projLocked=CAL_ADD_EXISTING.length>0; // добавляем видео в уже существующую съёмку — проект менять нельзя
   const projPills=(DATA.projects||[]).map(p=>`<div class="pill ${CAL_ADD_PROJ==p.id?'active':''}" data-caladdproj="${p.id}">${esc(p.name)}</div>`).join('');
   let itemPicker='';
   if(CAL_ADD_PROJ){
     const items=CAL_ADD_ITEMS;
-    itemPicker=`<div class="muted" style="margin-top:6px">Сценарий из контент-плана:</div><div class="pills">${
+    itemPicker=`<div class="muted" style="margin-top:6px">Видео из контент-плана (можно несколько — все снимаются на этой съёмке):</div><div class="pills">${
       items===null?'<div class="muted" style="font-size:12px">Загрузка…</div>'
-      :items.length?items.map(it=>`<div class="pill ${CAL_ADD_ITEM==it.id?'active':''}" data-caladditem="${it.id}">#${it.idx}${it.theme?': '+esc(it.theme.slice(0,20)):''}</div>`).join('')
-      :'<div class="muted" style="font-size:12px">В активном периоде этого проекта нет видео</div>'
+      :items.filter(it=>!CAL_ADD_EXISTING.includes(it.id)).length?items.filter(it=>!CAL_ADD_EXISTING.includes(it.id)).map(it=>`<div class="pill ${CAL_ADD_SEL.has(it.id)?'active':''}" data-caladditem="${it.id}">#${it.idx}${it.theme?': '+esc(it.theme.slice(0,20)):''}</div>`).join('')
+      :'<div class="muted" style="font-size:12px">Больше видео в активном периоде этого проекта нет</div>'
     }</div>`;
   }
   const mgrPills=(DATA.calendarManagers||[]).map(mm=>`<div class="pill ${CAL_ADD_MANAGER==mm.id?'active':''}" data-caladdmgr="${mm.id}">${esc(mm.name)}</div>`).join('');
   return `<div class="card" style="margin-top:8px">
-    <div class="muted">Проект:</div><div class="pills">${projPills}</div>
+    ${projLocked?`<div class="muted">Добавляем видео в съёмку проекта <b>${esc((DATA.projects||[]).find(p=>p.id===CAL_ADD_PROJ)?.name||'')}</b></div>`:`<div class="muted">Проект:</div><div class="pills">${projPills}</div>`}
     ${itemPicker}
     <div class="muted" style="margin-top:6px">Менеджер на съёмке:</div><div class="pills">${mgrPills||'<div class="muted" style="font-size:12px">Нет менеджеров в команде</div>'}</div>
     <div class="muted" style="margin-top:6px">Время:</div><input type="time" id="caladd_time" value="${esc(CAL_ADD_TIME)}">
-    <div class="muted" style="margin-top:6px">Реквизиты (необязательно — пусто = не менять уже сохранённые):</div><textarea id="caladd_props" style="min-height:52px">${esc(CAL_ADD_PROPS)}</textarea>
+    <div class="muted" style="font-size:11px;margin-top:6px">Реквизиты у каждого видео свои — правятся в его карточке в «Таблице».</div>
     <div class="row" style="gap:6px;margin-top:8px">
       <button class="btn sm" data-caladdsave>💾 Назначить</button>
       <button class="btn sm sec" data-caladdcancel>Отмена</button>
@@ -1105,53 +1114,72 @@ function bind(){
   document.querySelectorAll('[data-calnext]').forEach(b=>b.onclick=()=>{ let{y,m}=CAL_CURSOR; m++; if(m>11){m=0;y++;} CAL_CURSOR={y,m}; CAL_DAY=null; CAL_ADD=false; render(); });
   document.querySelectorAll('[data-calday]').forEach(c=>c.onclick=()=>{ CAL_DAY=(CAL_DAY===c.dataset.calday?null:c.dataset.calday); CAL_ADD=false; render(); });
   const caldayclose=document.querySelector('[data-caldayclose]'); if(caldayclose) caldayclose.onclick=()=>{CAL_DAY=null;CAL_ADD=false;render();};
-  const caladdopen=document.querySelector('[data-caladdopen]'); if(caladdopen) caladdopen.onclick=()=>{CAL_ADD=true;CAL_ADD_PROJ=null;CAL_ADD_ITEMS=null;CAL_ADD_ITEM=null;CAL_ADD_MANAGER=null;CAL_ADD_TIME='';CAL_ADD_PROPS='';render();};
+  const caladdopen=document.querySelector('[data-caladdopen]'); if(caladdopen) caladdopen.onclick=()=>{CAL_ADD=true;CAL_ADD_PROJ=null;CAL_ADD_ITEMS=null;CAL_ADD_SEL=new Set();CAL_ADD_MANAGER=null;CAL_ADD_TIME='';CAL_ADD_EXISTING=[];render();};
   const caladdcancel=document.querySelector('[data-caladdcancel]'); if(caladdcancel) caladdcancel.onclick=()=>{CAL_ADD=false;render();};
+  document.querySelectorAll('[data-caladdmore]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const projectId=+b.dataset.caladdmore;
+    const group=(DATA.calendarShoots||[]).filter(s=>s.projectId===projectId&&s.day===CAL_DAY);
+    const first=group[0];
+    CAL_ADD=true; CAL_ADD_PROJ=projectId; CAL_ADD_ITEMS=null; CAL_ADD_SEL=new Set();
+    CAL_ADD_EXISTING=group.map(s=>s.id);
+    const mm=first&&first.shoot_manager?(DATA.calendarManagers||[]).find(x=>x.name===first.shoot_manager):null;
+    CAL_ADD_MANAGER=mm?mm.id:null; CAL_ADD_TIME=first?first.shoot_time||'':'';
+    render();
+    const res=await api('POST',{type:'plan_active_items',projectId});
+    CAL_ADD_ITEMS=(res&&res.items)||[]; render();
+  }));
   document.querySelectorAll('[data-caladdproj]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
-    CAL_ADD_PROJ=+b.dataset.caladdproj; CAL_ADD_ITEM=null; CAL_ADD_ITEMS=null; render();
+    CAL_ADD_PROJ=+b.dataset.caladdproj; CAL_ADD_SEL=new Set(); CAL_ADD_ITEMS=null; render();
     const res=await api('POST',{type:'plan_active_items',projectId:CAL_ADD_PROJ});
     CAL_ADD_ITEMS=(res&&res.items)||[]; render();
   }));
-  document.querySelectorAll('[data-caladditem]').forEach(b=>b.onclick=()=>{CAL_ADD_ITEM=+b.dataset.caladditem;render();});
+  document.querySelectorAll('[data-caladditem]').forEach(b=>b.onclick=()=>{const id=+b.dataset.caladditem; if(CAL_ADD_SEL.has(id))CAL_ADD_SEL.delete(id); else CAL_ADD_SEL.add(id); render();});
   document.querySelectorAll('[data-caladdmgr]').forEach(b=>b.onclick=()=>{const id=+b.dataset.caladdmgr;CAL_ADD_MANAGER=(CAL_ADD_MANAGER===id?null:id);render();});
   const caladdsave=document.querySelector('[data-caladdsave]'); if(caladdsave) caladdsave.onclick=()=>busyClick(caladdsave, async()=>{
-    if(!CAL_ADD_ITEM){tg.showAlert&&tg.showAlert('Выбери сценарий из контент-плана');return;}
+    const itemIds=[...CAL_ADD_EXISTING, ...CAL_ADD_SEL];
+    if(!itemIds.length){tg.showAlert&&tg.showAlert('Выбери хотя бы одно видео из контент-плана');return;}
     const[y,m,dd]=CAL_DAY.split('-');
     const shoot_date=`${dd}.${m}.${y}`;
     const mgr=(DATA.calendarManagers||[]).find(x=>x.id===CAL_ADD_MANAGER);
-    const time=val('caladd_time'), props=val('caladd_props');
-    const patch={shoot_date,shoot_time:time||''}; if(mgr) patch.shoot_manager=mgr.name; if(props.trim()) patch.props=props.trim();
-    const res=await api('POST',{type:'item_patch',id:CAL_ADD_ITEM,patch});
+    const res=await api('POST',{type:'calendar_assign',itemIds,shoot_date,shoot_time:val('caladd_time')||'',shoot_manager:mgr?mgr.name:''});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
     CAL_ADD=false;
-    await calRefresh(); render();
-    tg.showAlert&&tg.showAlert('Съёмка назначена ✅');
+    if(res&&res.calendarShoots){DATA.calendarShoots=res.calendarShoots;DATA.calendarManagers=res.calendarManagers;}
+    render();
+    tg.showAlert&&tg.showAlert(res&&res.skippedLocked?`Назначено, но ${res.skippedLocked} видео заблокировано админом`:'Съёмка назначена ✅');
   });
   document.querySelectorAll('[data-caledittoggle]').forEach(b=>b.onclick=()=>{
-    const id=+b.dataset.caledittoggle;
-    if(CAL_EDIT_ID===id){CAL_EDIT_ID=null;} else { CAL_EDIT_ID=id; const s=(DATA.calendarShoots||[]).find(x=>x.id===id); const mm=s&&s.shoot_manager?(DATA.calendarManagers||[]).find(x=>x.name===s.shoot_manager):null; CAL_EDIT_MGR=mm?mm.id:null; }
+    const projectId=+b.dataset.caledittoggle;
+    if(CAL_EDIT_PROJ===projectId){CAL_EDIT_PROJ=null;} else {
+      CAL_EDIT_PROJ=projectId;
+      const s=(DATA.calendarShoots||[]).find(x=>x.projectId===projectId&&x.day===CAL_DAY);
+      const mm=s&&s.shoot_manager?(DATA.calendarManagers||[]).find(x=>x.name===s.shoot_manager):null;
+      CAL_EDIT_MGR=mm?mm.id:null;
+    }
     render();
   });
   document.querySelectorAll('[data-caleditmgr]').forEach(b=>b.onclick=()=>{const id=+b.dataset.caleditmgr;CAL_EDIT_MGR=(CAL_EDIT_MGR===id?null:id);render();});
-  const caleditcancel=document.querySelector('[data-caleditcancel]'); if(caleditcancel) caleditcancel.onclick=()=>{CAL_EDIT_ID=null;render();};
+  const caleditcancel=document.querySelector('[data-caleditcancel]'); if(caleditcancel) caleditcancel.onclick=()=>{CAL_EDIT_PROJ=null;render();};
   document.querySelectorAll('[data-caleditsave]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
-    const id=+b.dataset.caleditsave;
+    const projectId=+b.dataset.caleditsave;
+    const itemIds=(DATA.calendarShoots||[]).filter(s=>s.projectId===projectId&&s.day===CAL_DAY).map(s=>s.id);
     const mgr=(DATA.calendarManagers||[]).find(x=>x.id===CAL_EDIT_MGR);
-    const time=val('caledit_time');
-    const patch={shoot_time:time||'', shoot_manager:mgr?mgr.name:''};
-    const res=await api('POST',{type:'item_patch',id,patch});
+    const res=await api('POST',{type:'calendar_assign',itemIds,shoot_date:CAL_DAY.split('-').reverse().join('.'),shoot_time:val('caledit_time')||'',shoot_manager:mgr?mgr.name:''});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
-    CAL_EDIT_ID=null;
-    await calRefresh(); render();
+    CAL_EDIT_PROJ=null;
+    if(res&&res.calendarShoots){DATA.calendarShoots=res.calendarShoots;DATA.calendarManagers=res.calendarManagers;}
+    render();
     tg.showAlert&&tg.showAlert('Сохранено ✅');
   }));
-  document.querySelectorAll('[data-calclear]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-calcleargroup]').forEach(b=>b.onclick=()=>{
+    const itemIds=b.dataset.calcleargroup.split(',').map(Number);
     const run=()=>busyClick(b, async()=>{
-      const res=await api('POST',{type:'item_patch',id:+b.dataset.calclear,patch:{shoot_date:''}});
+      const res=await api('POST',{type:'calendar_assign',itemIds,shoot_date:'',shoot_time:'',shoot_manager:''});
       if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
-      await calRefresh(); render();
+      if(res&&res.calendarShoots){DATA.calendarShoots=res.calendarShoots;DATA.calendarManagers=res.calendarManagers;}
+      render();
     });
-    if(tg.showConfirm){tg.showConfirm('Убрать эту съёмку с календаря (дата очистится)?',(ok)=>{if(ok)run();});}else run();
+    if(tg.showConfirm){tg.showConfirm('Убрать всю эту съёмку с календаря (дата очистится у всех видео группы)?',(ok)=>{if(ok)run();});}else run();
   });
   document.querySelectorAll('[data-caljump]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
     const[itemId,projectId,planId]=b.dataset.caljump.split(':').map(Number);
