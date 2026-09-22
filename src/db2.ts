@@ -189,6 +189,30 @@ export async function getMemberTabsBulk(ids: number[]): Promise<Record<number, s
   return out;
 }
 
+// ---------- проекты, привязанные к менеджеру (без привязки = видит все, как раньше) ----------
+export async function getMemberProjects(telegramId: number): Promise<number[] | null> {
+  try {
+    const raw = await getSetting(`member_projects:${telegramId}`);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return Array.isArray(j.ids) && j.ids.length ? j.ids : null;
+  } catch { return null; }
+}
+export async function setMemberProjects(telegramId: number, ids: number[] | null): Promise<void> {
+  await setSetting(`member_projects:${telegramId}`, JSON.stringify({ ids: ids || [] }));
+}
+export async function getMemberProjectsBulk(ids: number[]): Promise<Record<number, number[]>> {
+  if (!ids.length) return {};
+  const keys = ids.map((id) => `member_projects:${id}`);
+  const { data } = await supabase.from("app_settings").select("key,value").in("key", keys);
+  const out: Record<number, number[]> = {};
+  for (const r of (data as any[]) ?? []) {
+    const id = +String(r.key).split(":")[1];
+    try { const j = JSON.parse(r.value); if (Array.isArray(j.ids) && j.ids.length) out[id] = j.ids; } catch {}
+  }
+  return out;
+}
+
 // ---------- личная группа сотрудника (ТЗ и напоминания дублируются туда) ----------
 // привязывается командой /bindperson внутри самой группы — так chat_id берётся из Telegram,
 // а не вводится вручную (админ его всё равно не знает)

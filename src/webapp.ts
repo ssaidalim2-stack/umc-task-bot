@@ -36,6 +36,7 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 const TABS_BY_ROLE: Record<string, string[]> = {
   admin: ["home", "board", "tasks", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
   manager: ["home", "board", "tasks", "tz", "plan", "calendar", "work", "analytics", "report"],
+  pm: ["home", "board", "tasks", "tz", "plan", "calendar", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks"],
   editor: ["home", "mywork", "tasks"],
   designer: ["home", "mywork", "tasks"],
@@ -51,7 +52,7 @@ const SECTION = {
   edit: { label: "Монтаж", roleKey: "editor", specialty: "edit" },
 } as const;
 
-const ROLE_LABEL_RU: Record<string, string> = { admin: "Админ", manager: "Менеджер", videographer: "Видеограф", editor: "Монтажёр", designer: "Дизайнер", sales: "Отдел продаж", member: "Сотрудник" };
+const ROLE_LABEL_RU: Record<string, string> = { admin: "Админ", manager: "Менеджер", pm: "Проджект-менеджер", videographer: "Видеограф", editor: "Монтажёр", designer: "Дизайнер", sales: "Отдел продаж", member: "Сотрудник" };
 const OPERATIONAL_ROLES = ["manager", "videographer", "editor", "designer"];
 
 function isAdminId(member: db.Member | null, id: number) {
@@ -151,11 +152,12 @@ async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin:
 // съёмки для календаря — читаются напрямую из shoot_date/shoot_time/shoot_manager
 // пунктов контент-плана (video), а не отдельной таблицей, чтобы календарь и таблица
 // всегда показывали одно и то же
-async function buildCalendarData() {
+async function buildCalendarData(restrictProjectIds?: number[] | null) {
   const [items, projects, members] = await Promise.all([d2.getAllItems(), d2.getActiveProjects(), db.listMembers()]);
-  const projectNameById = new Map(projects.map((p) => [p.id, p.name]));
+  const visibleProjects = restrictProjectIds && restrictProjectIds.length ? projects.filter((p) => restrictProjectIds.includes(p.id)) : projects;
+  const projectNameById = new Map(visibleProjects.map((p) => [p.id, p.name]));
   const calendarShoots = items
-    .filter((it) => it.type === "video")
+    .filter((it) => it.type === "video" && projectNameById.has(it.project_id))
     .map((it) => {
       const d = parseItemData((it as any).title);
       const day = parseShootDay(d.shoot_date);
@@ -191,6 +193,12 @@ export async function getData(userId: number) {
     ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))]))
     : Array.from(new Set(memberRoles.flatMap((r) => TABS_BY_ROLE[r] || [])));
 
+  // обычный менеджер может быть привязан к конкретным проектам (видит только их);
+  // admin и роль pm (project manager) всегда видят всё
+  const canSeeAllProjects = isAdmin || memberRoles.includes("pm");
+  const restrictedProjectIds = !canSeeAllProjects && memberRoles.includes("manager") ? await d2.getMemberProjects(userId) : null;
+  const visibleProjects = restrictedProjectIds && restrictedProjectIds.length ? projects.filter((p) => restrictedProjectIds.includes(p.id)) : projects;
+
   const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
   const plansByProject = new Map<number, any[]>();
   for (const pl of plans) { const a = plansByProject.get(pl.project_id) || []; a.push({ id: pl.id, period: pl.period, is_active: pl.is_active }); plansByProject.set(pl.project_id, a); }
@@ -202,7 +210,7 @@ export async function getData(userId: number) {
   const itemsByProject = new Map<number, any[]>();
   for (const it of items) { if (!activePlanIds.has(it.plan_id)) continue; const a = itemsByProject.get(it.project_id) || []; a.push(it); itemsByProject.set(it.project_id, a); }
 
-  const projOut = projects.map((p) => {
+  const projOut = visibleProjects.map((p) => {
     const its = itemsByProject.get(p.id) || [];
     const videos = its.filter((x) => x.type === "video").sort((a, b) => a.idx - b.idx);
     const graphics = its.filter((x) => x.type === "graphic");
@@ -255,7 +263,7 @@ export async function getData(userId: number) {
 
   // статистика прогресса по активному периоду
   const LANGS = ["ru", "uz", "en"];
-  const statsProjects = projects.map((p) => {
+  const statsProjects = visibleProjects.map((p) => {
     const its = itemsByProject.get(p.id) || [];
     const videos = its.filter((x) => x.type === "video");
     const graphics = its.filter((x) => x.type !== "video");
@@ -330,12 +338,13 @@ export async function getData(userId: number) {
     }
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
     const groupsBulk = await d2.getMemberGroupsBulk(members.map((m) => m.telegram_id));
-    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk }));
+    const projectsBulk = await d2.getMemberProjectsBulk(members.map((m) => m.telegram_id));
+    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk, projectIds: projectsBulk[m.telegram_id] || [] }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
   const salesLeads = tabs.includes("sales") ? await serializeLeads() : [];
-  const calendarExtra = tabs.includes("calendar") ? await buildCalendarData() : { calendarShoots: [], calendarManagers: [] };
+  const calendarExtra = tabs.includes("calendar") ? await buildCalendarData(restrictedProjectIds) : { calendarShoots: [], calendarManagers: [] };
 
   let myWork: any[] = [];
   if (role === "videographer" || role === "editor" || role === "designer") {
@@ -564,6 +573,13 @@ export async function doAction(userId: number, action: any) {
       await d2.setTeamRoles(target, roles, makeAdmin);
       return getData(userId);
     }
+    case "team_set_projects": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const target = +action.id;
+      const ids = Array.isArray(action.projectIds) ? action.projectIds.map((n: any) => +n).filter((n: number) => !Number.isNaN(n)) : [];
+      await d2.setMemberProjects(target, ids.length ? ids : null);
+      return getData(userId);
+    }
     case "team_delete": {
       if (role !== "admin") return { error: "нет доступа" };
       const target = +action.id;
@@ -746,8 +762,10 @@ export async function doAction(userId: number, action: any) {
       return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
     }
     case "calendar_shoots": {
-      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
-      return await buildCalendarData();
+      const myRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
+      if (!isAdmin && !myRoles.includes("manager") && !myRoles.includes("pm")) return { error: "нет доступа" };
+      const restrictIds = !isAdmin && !myRoles.includes("pm") ? await d2.getMemberProjects(userId) : null;
+      return await buildCalendarData(restrictIds);
     }
     case "item_lock": {
       if (role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };

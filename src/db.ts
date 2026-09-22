@@ -73,7 +73,7 @@ export async function deleteMember(telegramId: number): Promise<void> {
   await supabase.from("members").delete().eq("telegram_id", telegramId);
 }
 
-export const KNOWN_ROLES = ["manager", "videographer", "editor", "designer", "sales", "member"];
+export const KNOWN_ROLES = ["manager", "pm", "videographer", "editor", "designer", "sales", "member"];
 // специализация хранит список ролей через запятую ("videographer,sales") — человек может
 // совмещать несколько; фолбэк на старое сопоставление по имени для записей до этой миграции
 export function memberRoleList(m: Member | null): string[] {

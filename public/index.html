@@ -250,6 +250,23 @@ async function api(method, body){
 }
 function haptic(){ try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){} }
 async function load(){ try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
+// тихое автообновление — чтобы правки с другого устройства подтягивались сами, без ручного
+// перезахода. Пропускаем, пока идёт активное редактирование (открыта карточка пункта или
+// фокус стоит в поле ввода), чтобы не затирать то, что человек ещё не сохранил.
+async function silentRefresh(){
+  if(document.hidden || ACT_BUSY) return;
+  const el=document.activeElement;
+  if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || CAL_ADD || CAL_EDIT_ID!=null) return;
+  try{
+    const res=await api('GET');
+    DATA=res;
+    if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0];
+    buildTabs(); render();
+  }catch(e){}
+}
+setInterval(silentRefresh, 20000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) silentRefresh(); });
 let ACT_BUSY=false;
 async function act(a){
   if(ACT_BUSY) return;
@@ -324,7 +341,7 @@ function render(){
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
 }
-function roleLabel(r){return {admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"}[r]||"";}
+function roleLabel(r){return {admin:"Админ",manager:"Менеджер",pm:"Проджект-менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"}[r]||"";}
 
 function renderTable(){
   const projects=DATA.projects;
@@ -842,17 +859,18 @@ function renderTZ(){
     <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
 }
 
-const ROLE_OPTS_TEAM=[["manager","Менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
-const ROLE_LABEL_TEAM={admin:"Админ",manager:"Менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"};
+const ROLE_OPTS_TEAM=[["manager","Менеджер"],["pm","Проджект-менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
+const ROLE_LABEL_TEAM={admin:"Админ",manager:"Менеджер",pm:"Проджект-менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"};
 const ALL_TABS_FRONT=["home","board","tasks","tz","plan","calendar","video","work","analytics","report","subs","mywork","team","projects","sales"];
 const TABS_BY_ROLE_FRONT={
   admin:["home","board","tasks","tz","plan","calendar","video","work","analytics","report","subs","team","projects","sales"],
   manager:["home","board","tasks","tz","plan","calendar","work","analytics","report"],
+  pm:["home","board","tasks","tz","plan","calendar","work","analytics","report"],
   videographer:["home","mywork","tasks"], editor:["home","mywork","tasks"], designer:["home","mywork","tasks"],
   sales:["home","sales"],
   member:["home","tasks"],
 };
-let TEAM_PERM_OPEN=null, TEAM_ROLE_OPEN=null;
+let TEAM_PERM_OPEN=null, TEAM_ROLE_OPEN=null, TEAM_PROJ_OPEN=null;
 function renderTeam(){
   const rows=(DATA.teamAll||[]).map(m=>{
     const roles=m.isAdmin?['admin']:(m.roles&&m.roles.length?m.roles:['member']);
@@ -877,17 +895,29 @@ function renderTeam(){
         <button class="btn xs sec" data-permreset="${m.id}">Сбросить (по ролям)</button>
       </div>
     </div>`:'';
+    const isPureManager=roles.includes('manager') && !roles.includes('pm') && !m.isAdmin;
+    const projIds=m.projectIds||[];
+    const projPanel=(TEAM_PROJ_OPEN===m.id&&isPureManager)?`<div class="card" style="margin:6px 0 10px">
+      <div class="muted" style="margin-bottom:6px">Проекты, которые видит этот менеджер в таблице ${projIds.length?'<span class="badge">ограничено</span>':'<span class="badge">видит все</span>'}:</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        ${(DATA.projects||[]).map(p=>`<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" data-projchk="${m.id}:${p.id}" ${projIds.includes(p.id)?'checked':''}> ${esc(p.name)}</label>`).join('')}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Не отмечено ни одного — видит все проекты (по умолчанию).</div>
+      <button class="btn xs" data-projsave="${m.id}" style="margin-top:10px">Сохранить</button>
+    </div>`:'';
     return `<div class="vid" style="align-items:center">
-      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${roleBadges}${m.username?' · @'+esc(m.username):''}${m.hasGroup?' · 🔗 группа привязана':''}</div></div>
+      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${roleBadges}${m.username?' · @'+esc(m.username):''}${m.hasGroup?' · 🔗 группа привязана':''}${isPureManager&&projIds.length?' · 📁 '+projIds.length+' проект(ов)':''}</div></div>
       <button class="xbtn" data-roletoggle="${m.id}" title="Роли">🎭</button>
+      ${isPureManager?`<button class="xbtn" data-projtoggle2="${m.id}" title="Какие проекты видит">📁</button>`:''}
       <button class="xbtn" data-permtoggle="${m.id}" title="Права доступа к разделам">⚙️</button>
       ${m.hasGroup?`<button class="xbtn" data-groupunbind="${m.id}" title="Отвязать группу">🔗✕</button>`:''}
       <button class="xbtn" data-teamdel="${m.id}" title="Удалить из команды">🗑</button>
-    </div>${rolePanel}${permPanel}`;
+    </div>${rolePanel}${permPanel}${projPanel}`;
   }).join('');
   return `<div class="card"><h3>👥 Команда</h3>
     ${rows||'<div class="muted">Пока никто не заходил в бота.</div>'}
     <div class="muted" style="font-size:12px;margin-top:10px">Новый человек появится тут сам, как только откроет бота (/start). Кнопка 🎭 — назначить одну или несколько ролей (они складывают доступные разделы). Кнопка ⚙️ — точечно включить/выключить конкретные разделы именно для этого человека, в обход ролей.
+    <br><br>📁 Обычный менеджер по умолчанию видит все проекты в таблице; кнопкой 📁 можно ограничить его конкретными проектами. Роль "Проджект-менеджер" всегда видит всё, независимо от этих настроек.
     <br><br>🔗 Личная группа: чтобы ТЗ и напоминания о дедлайнах дублировались человеку не только в личку, но и в его группу — добавь бота в эту группу и напиши там команду <code>/bindperson Имя</code> (или его telegram_id). Отвязать можно кнопкой 🔗✕ здесь.</div></div>`;
 }
 function renderProjects(){
@@ -961,6 +991,7 @@ function renderSalesDetail(){
 // что и таблица контент-плана — единый источник данных, календарь просто другой вид) ----
 let CAL_CURSOR=null, CAL_DAY=null, CAL_ADD=false;
 let CAL_ADD_PROJ=null, CAL_ADD_ITEMS=null, CAL_ADD_ITEM=null, CAL_ADD_MANAGER=null, CAL_ADD_TIME='', CAL_ADD_PROPS='';
+let CAL_EDIT_ID=null, CAL_EDIT_MGR=null;
 const CAL_WD=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 const MONTH_NAMES=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
 function isoKey(y,m,day){ return `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`; }
@@ -1000,17 +1031,26 @@ function renderCalendar(){
     const [dy,dm,dd]=CAL_DAY.split('-');
     dayPanel=`<div class="card" style="margin-top:10px">
       <div class="row"><h3>${dd}.${dm}.${dy}</h3><button class="btn sm sec" data-caldayclose>✕</button></div>
-      ${shoots.length?shoots.map(s=>`<div class="vid" style="align-items:flex-start">
+      ${shoots.length?shoots.map(s=>{
+        const editForm=CAL_EDIT_ID===s.id?`<div class="card" style="margin-top:6px;padding:10px">
+          <div class="muted">Менеджер на съёмке:</div><div class="pills">${(DATA.calendarManagers||[]).map(mm=>`<div class="pill ${CAL_EDIT_MGR==mm.id?'active':''}" data-caleditmgr="${mm.id}">${esc(mm.name)}</div>`).join('')||'<div class="muted" style="font-size:12px">Нет менеджеров в команде</div>'}</div>
+          <div class="muted" style="margin-top:6px">Время:</div><input type="time" id="caledit_time" value="${esc(s.shoot_time||'')}">
+          <div class="row" style="gap:6px;margin-top:8px"><button class="btn xs" data-caleditsave="${s.id}">💾 Сохранить</button><button class="btn xs sec" data-caleditcancel>Отмена</button></div>
+        </div>`:'';
+        return `<div class="vid" style="align-items:flex-start">
         <div style="min-width:0;flex:1">
           <div><b>${esc(s.projectName)}</b>${s.format?' · '+formatLabel(s.format):''}</div>
           <div class="muted" style="font-size:13px">${esc(s.theme||'без темы')}</div>
           <div class="muted" style="font-size:12px">${s.shoot_time?'🕒 '+esc(s.shoot_time)+' · ':''}${s.shoot_manager?'👤 '+esc(s.shoot_manager):'менеджер не назначен'}</div>
+          ${editForm}
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;flex:0 0 auto">
+          <button class="xbtn" data-caledittoggle="${s.id}" title="Менеджер/время">✎</button>
           <button class="xbtn" data-caljump="${s.id}:${s.projectId}:${s.planId}">Открыть →</button>
           <button class="xbtn" data-calclear="${s.id}" title="Убрать со съёмки">✕ дата</button>
         </div>
-      </div>`).join(''):'<div class="muted">Съёмок не назначено</div>'}
+      </div>`;
+      }).join(''):'<div class="muted">Съёмок не назначено</div>'}
       ${CAL_ADD?renderCalAddForm():`<button class="btn sm full" data-caladdopen style="margin-top:8px">＋ Назначить съёмку</button>`}
     </div>`;
   }
@@ -1087,6 +1127,24 @@ function bind(){
     await calRefresh(); render();
     tg.showAlert&&tg.showAlert('Съёмка назначена ✅');
   });
+  document.querySelectorAll('[data-caledittoggle]').forEach(b=>b.onclick=()=>{
+    const id=+b.dataset.caledittoggle;
+    if(CAL_EDIT_ID===id){CAL_EDIT_ID=null;} else { CAL_EDIT_ID=id; const s=(DATA.calendarShoots||[]).find(x=>x.id===id); const mm=s&&s.shoot_manager?(DATA.calendarManagers||[]).find(x=>x.name===s.shoot_manager):null; CAL_EDIT_MGR=mm?mm.id:null; }
+    render();
+  });
+  document.querySelectorAll('[data-caleditmgr]').forEach(b=>b.onclick=()=>{const id=+b.dataset.caleditmgr;CAL_EDIT_MGR=(CAL_EDIT_MGR===id?null:id);render();});
+  const caleditcancel=document.querySelector('[data-caleditcancel]'); if(caleditcancel) caleditcancel.onclick=()=>{CAL_EDIT_ID=null;render();};
+  document.querySelectorAll('[data-caleditsave]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const id=+b.dataset.caleditsave;
+    const mgr=(DATA.calendarManagers||[]).find(x=>x.id===CAL_EDIT_MGR);
+    const time=val('caledit_time');
+    const patch={shoot_time:time||'', shoot_manager:mgr?mgr.name:''};
+    const res=await api('POST',{type:'item_patch',id,patch});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    CAL_EDIT_ID=null;
+    await calRefresh(); render();
+    tg.showAlert&&tg.showAlert('Сохранено ✅');
+  }));
   document.querySelectorAll('[data-calclear]').forEach(b=>b.onclick=()=>{
     const run=()=>busyClick(b, async()=>{
       const res=await api('POST',{type:'item_patch',id:+b.dataset.calclear,patch:{shoot_date:''}});
@@ -1176,7 +1234,14 @@ function bind(){
     const run=()=>act({type:'team_unbind_group',id});
     if(tg.showConfirm){tg.showConfirm('Отвязать личную группу этого человека?',(ok)=>{if(ok)run();});}else run();
   });
-  document.querySelectorAll('[data-roletoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.roletoggle;TEAM_ROLE_OPEN=(TEAM_ROLE_OPEN===id?null:id);TEAM_PERM_OPEN=null;render();});
+  document.querySelectorAll('[data-roletoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.roletoggle;TEAM_ROLE_OPEN=(TEAM_ROLE_OPEN===id?null:id);TEAM_PERM_OPEN=null;TEAM_PROJ_OPEN=null;render();});
+  document.querySelectorAll('[data-projtoggle2]').forEach(b=>b.onclick=()=>{const id=+b.dataset.projtoggle2;TEAM_PROJ_OPEN=(TEAM_PROJ_OPEN===id?null:id);TEAM_ROLE_OPEN=null;TEAM_PERM_OPEN=null;render();});
+  document.querySelectorAll('[data-projsave]').forEach(b=>b.onclick=()=>{
+    const id=+b.dataset.projsave;
+    const ids=[...document.querySelectorAll(`[data-projchk^="${id}:"]`)].filter(c=>c.checked).map(c=>+c.dataset.projchk.split(':')[1]);
+    TEAM_PROJ_OPEN=null;
+    act({type:'team_set_projects',id,projectIds:ids});
+  });
   document.querySelectorAll('[data-rolesave]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.rolesave;
     const isAdminChk=document.querySelector(`[data-roleadmin="${id}"]`);
@@ -1185,7 +1250,7 @@ function bind(){
     TEAM_ROLE_OPEN=null;
     act({type:'team_set_roles',id,roles,isAdmin});
   });
-  document.querySelectorAll('[data-permtoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.permtoggle;TEAM_PERM_OPEN=(TEAM_PERM_OPEN===id?null:id);TEAM_ROLE_OPEN=null;render();});
+  document.querySelectorAll('[data-permtoggle]').forEach(b=>b.onclick=()=>{const id=+b.dataset.permtoggle;TEAM_PERM_OPEN=(TEAM_PERM_OPEN===id?null:id);TEAM_ROLE_OPEN=null;TEAM_PROJ_OPEN=null;render();});
   document.querySelectorAll('[data-permsave]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.permsave;
     const boxes=document.querySelectorAll('[data-permchk^="'+id+':"]');
