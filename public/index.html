@@ -60,7 +60,7 @@
   .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
   .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
   .calwd{text-align:center;font-size:11px;opacity:.6;padding:2px 0}
-  .calcell{aspect-ratio:1/1;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:transform .1s ease}
+  .calcell{min-width:0;width:auto;height:40px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:transform .1s ease}
   .calcell:active{transform:scale(.94)}
   .calcell.empty{cursor:default;background:transparent!important}
   .calcell.today .calnum{text-decoration:underline}
@@ -495,9 +495,8 @@ function renderItemDetail(){
     ${it.type==='video'?renderFrames(it):`<textarea id="f_script" ${ro}>${esc(it.script)}</textarea>`}
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
     <div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
-    <div class="row" style="gap:10px">
-      ${it.type==='video'?`<div style="flex:1"><div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}</div>`:''}
-      <div style="flex:1"><div class="muted">Дедлайн:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}</div></div>
+    ${it.type==='video'?`<div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}`:''}
+    <div class="muted" style="margin-top:8px">Дедлайн:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()&&!lockedForMe?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
