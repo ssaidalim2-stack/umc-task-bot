@@ -289,7 +289,7 @@ const TABMETA={
   home:{ic:"🏠",t:"Главная"}, board:{ic:"📌",t:"Доска"}, work:{ic:"🗂️",t:"Работа"}, plan:{ic:"📋",t:"Таблица"}, video:{ic:"🎬",t:"Видео"},
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
   subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"}, team:{ic:"👥",t:"Команда"}, projects:{ic:"🗂",t:"Проекты"},
-  sales:{ic:"💼",t:"Отдел продаж"}, calendar:{ic:"📅",t:"Календарь"}, week:{ic:"🗓",t:"Неделя"},
+  sales:{ic:"💼",t:"Отдел продаж"}, calendar:{ic:"📅",t:"Календарь"}, week:{ic:"🗓",t:"Неделя"}, umc:{ic:"🌐",t:"umc.uz"},
 };
 // ---- аналитика (Meta) ----
 let AN_SEC='ads', AN_PROJ=null, AN_SINCE=null, AN_UNTIL=null, AN_DATA=null, AN_LOADING=false, AN_ERR=null;
@@ -330,7 +330,7 @@ async function silentRefresh(){
   if(document.hidden || ACT_BUSY) return;
   const el=document.activeElement;
   if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
-  if(TBL_OPEN!=null || SALES_OPEN!=null || CAL_ADD || CAL_EDIT_ID!=null) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null) return;
   try{
     const res=await api('GET');
     DATA=res;
@@ -412,7 +412,7 @@ function render(){
   const activeId=active&&active.id;
   const selStart=active&&typeof active.selectionStart==='number'?active.selectionStart:null;
   const selEnd=active&&typeof active.selectionEnd==='number'?active.selectionEnd:null;
-  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar,week:renderWeek};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar,week:renderWeek,umc:renderUmc};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
@@ -938,13 +938,13 @@ function renderTZ(){
 
 const ROLE_OPTS_TEAM=[["manager","Менеджер"],["pm","Проджект-менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
 const ROLE_LABEL_TEAM={admin:"Админ",manager:"Менеджер",pm:"Проджект-менеджер",videographer:"Видеограф",editor:"Монтажёр",designer:"Дизайнер",sales:"Отдел продаж",member:"Сотрудник"};
-const ALL_TABS_FRONT=["home","board","tasks","week","tz","plan","calendar","video","work","analytics","report","subs","mywork","team","projects","sales"];
+const ALL_TABS_FRONT=["home","board","tasks","week","tz","plan","calendar","video","work","analytics","report","subs","mywork","team","projects","sales","umc"];
 const TABS_BY_ROLE_FRONT={
-  admin:["home","board","tasks","week","tz","plan","calendar","video","work","analytics","report","subs","team","projects","sales"],
+  admin:["home","board","tasks","week","tz","plan","calendar","video","work","analytics","report","subs","team","projects","sales","umc"],
   manager:["home","board","tasks","week","tz","plan","calendar","work","analytics","report"],
   pm:["home","board","tasks","week","tz","plan","calendar","work","analytics","report"],
   videographer:["home","mywork","tasks","week"], editor:["home","mywork","tasks","week"], designer:["home","mywork","tasks","week"],
-  sales:["home","sales","tasks","week"],
+  sales:["home","sales","umc","tasks","week"],
   member:["home","tasks","week"],
 };
 let TEAM_PERM_OPEN=null, TEAM_ROLE_OPEN=null, TEAM_PROJ_OPEN=null;
@@ -1174,6 +1174,74 @@ async function calRefresh(){
   const fresh=await api('POST',{type:'calendar_shoots'});
   if(fresh&&fresh.calendarShoots){DATA.calendarShoots=fresh.calendarShoots;DATA.calendarManagers=fresh.calendarManagers;}
 }
+// ---- umc.uz: воронка привлечения профилей на площадку ----
+// три раздела ровно как на сайте: /bloggers, /specialities, /customer
+const UMC_KINDS=[["blogger","📷 Блогеры"],["specialist","🎨 Специалисты"],["business","🏢 Бизнес"]];
+const UMC_STATUS=[["new","🆕 Новый"],["contacted","📞 Связались"],["invited","✉️ Отправили ссылку"],["registered","✅ На umc.uz"],["rejected","❌ Отказ"]];
+function umcKindLabel(k){ const o=UMC_KINDS.find(x=>x[0]===k); return o?o[1]:k; }
+function umcStatusLabel(st){ const o=UMC_STATUS.find(x=>x[0]===st); return o?o[1]:st; }
+let UMC_KIND='blogger', UMC_SEARCH='', UMC_OPEN=null, UMC_EDIT=null;
+function captureUmcFields(){
+  if(!UMC_EDIT) return;
+  ['name','category','instagram','phone','email','followers','city','note','profile_url']
+    .forEach(k=>{ const e=document.getElementById('uf_'+k); if(e) UMC_EDIT[k]=e.value; });
+}
+function renderUmc(){
+  if(UMC_OPEN!=null) return renderUmcDetail();
+  const all=DATA.umcLeads||[];
+  const q=UMC_SEARCH.trim().toLowerCase();
+  const kindPills=UMC_KINDS.map(([k,l])=>{
+    const n=all.filter(x=>x.kind===k).length;
+    return `<div class="pill ${UMC_KIND===k?'active':''}" data-umckind="${k}">${l}${n?' · '+n:''}</div>`;
+  }).join('');
+  let list=all.filter(x=>x.kind===UMC_KIND);
+  if(q) list=list.filter(l=>[l.name,l.category,l.instagram,l.phone,l.email,l.city,l.note,l.added_by_name].some(v=>(v||'').toLowerCase().includes(q)));
+  // сводка по воронке, чтобы было видно сколько реально доведено до регистрации
+  const byStatus=UMC_STATUS.map(([k,l])=>{const n=all.filter(x=>x.kind===UMC_KIND&&x.status===k).length; return n?`${l}: ${n}`:null;}).filter(Boolean).join(' · ');
+  const rows=list.map(l=>`<div class="vid" data-umcopen="${l.id}" style="cursor:pointer;align-items:flex-start;gap:8px">
+      <div style="min-width:0;flex:1">
+        <div><b>${esc(l.name||'(без имени)')}</b>${l.category?' · '+esc(l.category):''}</div>
+        <div class="muted" style="font-size:12px">${l.instagram?'📷 '+esc(l.instagram)+'  ':''}${l.followers?'👥 '+esc(l.followers)+'  ':''}${l.phone?'📞 '+esc(l.phone):''}</div>
+        <div class="muted" style="font-size:11px;margin-top:2px">${l.added_by_name?'Ведёт: '+esc(l.added_by_name):''}${l.city?' · '+esc(l.city):''}</div>
+      </div>
+      <span class="badge" style="flex:0 0 auto">${umcStatusLabel(l.status)}</span>
+    </div>`).join('');
+  return `<div class="card">
+    <div class="row"><h3>🌐 umc.uz</h3><button class="btn sm" data-umcnew>＋ Добавить</button></div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Кого привлекаем на площадку umc.uz и на каком этапе.</div>
+    <div class="pills">${kindPills}</div>
+    ${byStatus?`<div class="muted" style="font-size:12px;margin-bottom:6px">${byStatus}</div>`:''}
+    <input id="umc_q" placeholder="🔍 Поиск: имя, ниша, инстаграм, телефон…" value="${esc(UMC_SEARCH)}" oninput="UMC_SEARCH=this.value;render()" style="margin-bottom:8px">
+    ${list.length?rows:'<div class="empty">Пока никого нет в этом разделе</div>'}
+  </div>`;
+}
+function renderUmcDetail(){
+  const isNew=UMC_OPEN==='new';
+  if(!UMC_EDIT){
+    const found=isNew?null:(DATA.umcLeads||[]).find(x=>x.id==UMC_OPEN);
+    UMC_EDIT=found?{...found}:{kind:UMC_KIND,name:'',category:'',instagram:'',phone:'',email:'',followers:'',city:'',note:'',profile_url:'',status:'new'};
+  }
+  const e=UMC_EDIT;
+  const isBlogger=e.kind==='blogger', isBusiness=e.kind==='business';
+  return `<div class="card">
+    <div class="row"><h3>${isNew?'Новая запись':umcKindLabel(e.kind)+' #'+e.id}</h3><button class="btn sm sec" data-umcclose>← назад</button></div>
+    <div class="muted">Раздел на сайте:</div><div class="pills">${UMC_KINDS.map(([k,l])=>`<div class="pill ${e.kind===k?'active':''}" data-umcekind="${k}">${l}</div>`).join('')}</div>
+    <div class="muted">${isBusiness?'Название компании:':'Имя:'}</div><input id="uf_name" value="${esc(e.name)}">
+    <div class="muted">${isBusiness?'Сфера / ниша:':'Категория (как на сайте):'}</div><input id="uf_category" value="${esc(e.category)}" placeholder="${isBlogger?'напр. Blogers, Marketing':isBusiness?'напр. Education':'напр. Design, Photo &amp; Video'}">
+    <div class="muted">Инстаграм:</div><input id="uf_instagram" value="${esc(e.instagram)}" placeholder="@username">
+    ${isBlogger?`<div class="muted">Подписчики:</div><input id="uf_followers" value="${esc(e.followers)}" placeholder="напр. 67 938">`:''}
+    <div class="muted">Телефон:</div><input id="uf_phone" value="${esc(e.phone)}">
+    <div class="muted">Email:</div><input id="uf_email" value="${esc(e.email)}">
+    <div class="muted">${isBlogger?'Локация / аудитория:':'Город:'}</div><input id="uf_city" value="${esc(e.city)}">
+    <div class="muted">Комментарий:</div><textarea id="uf_note" style="min-height:70px">${esc(e.note)}</textarea>
+    <div class="muted">Ссылка на профиль на umc.uz:</div><input id="uf_profile_url" value="${esc(e.profile_url)}" placeholder="https://umc.uz/ru/bloggers/…">
+    <div class="muted" style="margin-top:6px">Этап:</div><div class="pills">${UMC_STATUS.map(([k,l])=>`<div class="pill ${e.status===k?'active':''}" data-umcstatus="${k}">${l}</div>`).join('')}</div>
+    ${!isNew&&e.added_by_name?`<div class="muted" style="font-size:12px;margin-top:8px">Ведёт: ${esc(e.added_by_name)}</div>`:''}
+    <button class="btn full" data-umcsave style="margin-top:10px">💾 Сохранить</button>
+    ${!isNew&&DATA.user.role==='admin'?'<button class="btn sm sec full" data-umcdel style="margin-top:6px">🗑 Удалить</button>':''}
+  </div>`;
+}
+
 // ---- недельный план (Пн–Вс): задачи по сотрудникам на каждый день ----
 // хранятся как обычные задачи с дедлайном на этот день, поэтому попадают
 // и в «Мои задачи», и в напоминания, и в статистику
@@ -1254,6 +1322,31 @@ function bind(){
     document.querySelectorAll('[id^="ftxt_"]').forEach(e=>e.addEventListener('input',scheduleAutosave));
     const ub=document.querySelector('[data-undo]'); if(ub) ub.onclick=()=>busyClick(ub,undoLast);
   }
+  document.querySelectorAll('[data-umckind]').forEach(b=>b.onclick=()=>{UMC_KIND=b.dataset.umckind;render();});
+  document.querySelectorAll('[data-umcopen]').forEach(b=>b.onclick=()=>{UMC_OPEN=+b.dataset.umcopen;UMC_EDIT=null;render();});
+  const umcNew=document.querySelector('[data-umcnew]'); if(umcNew) umcNew.onclick=()=>{UMC_OPEN='new';UMC_EDIT=null;render();};
+  const umcClose=document.querySelector('[data-umcclose]'); if(umcClose) umcClose.onclick=()=>{UMC_OPEN=null;UMC_EDIT=null;render();};
+  document.querySelectorAll('[data-umcekind]').forEach(b=>b.onclick=()=>{captureUmcFields();UMC_EDIT.kind=b.dataset.umcekind;render();});
+  document.querySelectorAll('[data-umcstatus]').forEach(b=>b.onclick=()=>{captureUmcFields();UMC_EDIT.status=b.dataset.umcstatus;render();});
+  const umcSave=document.querySelector('[data-umcsave]'); if(umcSave) umcSave.onclick=()=>busyClick(umcSave, async()=>{
+    captureUmcFields();
+    if(!UMC_EDIT.name.trim()&&!UMC_EDIT.instagram.trim()&&!UMC_EDIT.phone.trim()){tg.showAlert&&tg.showAlert('Заполни хотя бы имя, инстаграм или телефон');return;}
+    const isNew=UMC_OPEN==='new';
+    const res=await api('POST',isNew?{type:'umc_add',fields:UMC_EDIT}:{type:'umc_update',id:UMC_EDIT.id,fields:UMC_EDIT});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    if(res&&res.umcLeads)DATA.umcLeads=res.umcLeads;
+    UMC_KIND=UMC_EDIT.kind; UMC_OPEN=null; UMC_EDIT=null; render();
+    tg.showAlert&&tg.showAlert('Сохранено ✅');
+  });
+  const umcDel=document.querySelector('[data-umcdel]'); if(umcDel) umcDel.onclick=()=>{
+    const run=()=>busyClick(umcDel, async()=>{
+      const res=await api('POST',{type:'umc_delete',id:UMC_EDIT.id});
+      if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+      if(res&&res.umcLeads)DATA.umcLeads=res.umcLeads;
+      UMC_OPEN=null;UMC_EDIT=null;render();
+    });
+    if(tg.showConfirm) tg.showConfirm('Удалить запись?',(ok)=>{if(ok)run();}); else run();
+  };
   document.querySelectorAll('[data-wkprev]').forEach(b=>b.onclick=()=>{WK_START=wkShift(WK_START,-7);WK_DAY=null;render();});
   document.querySelectorAll('[data-wknext]').forEach(b=>b.onclick=()=>{WK_START=wkShift(WK_START,7);WK_DAY=null;render();});
   document.querySelectorAll('[data-wkemp]').forEach(b=>b.onclick=()=>{WK_EMP=+b.dataset.wkemp;WK_DAY=null;render();});

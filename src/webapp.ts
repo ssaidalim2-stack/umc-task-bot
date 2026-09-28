@@ -34,16 +34,16 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
+  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales", "umc"],
   manager: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
   pm: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks", "week"],
   editor: ["home", "mywork", "tasks", "week"],
   designer: ["home", "mywork", "tasks", "week"],
-  sales: ["home", "sales", "tasks", "week"],
+  sales: ["home", "sales", "umc", "tasks", "week"],
   member: ["home", "tasks", "week"],
 };
-const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
+const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales", "umc"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -143,11 +143,19 @@ function serializeItem(v: any) {
   const d = parseItemData(v.title);
   return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
 }
-async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin: boolean): Promise<boolean> {
+async function hasTabAccess(userId: number, member: db.Member | null, isAdmin: boolean, tab: string): Promise<boolean> {
   if (isAdmin) return true;
   const customTabs = await d2.getMemberTabs(userId);
-  if (customTabs) return customTabs.includes("sales");
-  return db.memberRoleList(member).includes("sales");
+  if (customTabs) return customTabs.includes(tab);
+  return db.memberRoleList(member).some((r) => (TABS_BY_ROLE[r] || []).includes(tab));
+}
+async function serializeUmc() {
+  const rows = await d2.listUmcLeads();
+  return rows.map((l) => ({
+    id: l.id, kind: l.kind, name: l.name || "", category: l.category || "", instagram: l.instagram || "",
+    phone: l.phone || "", email: l.email || "", followers: l.followers || "", city: l.city || "",
+    note: l.note || "", profile_url: l.profile_url || "", status: l.status, added_by_name: l.added_by_name || "",
+  }));
 }
 // съёмки для календаря — читаются напрямую из shoot_date/shoot_time/shoot_manager
 // пунктов контент-плана (video), а не отдельной таблицей, чтобы календарь и таблица
@@ -362,6 +370,7 @@ export async function getData(userId: number) {
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
   const salesLeads = tabs.includes("sales") ? await serializeLeads() : [];
+  const umcLeads = tabs.includes("umc") ? await serializeUmc() : [];
   const calendarExtra = tabs.includes("calendar") ? await buildCalendarData(restrictedProjectIds) : { calendarShoots: [], calendarManagers: [] };
 
   let myWork: any[] = [];
@@ -391,7 +400,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
-    confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
+    confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads, umcLeads,
     ...calendarExtra,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
@@ -708,20 +717,45 @@ export async function doAction(userId: number, action: any) {
 
     // ---- отдел продаж (доступ по вкладке, не по роли — назначается точечно через чекбоксы в «Команде») ----
     case "sales_list": {
-      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasTabAccess(userId, member, isAdmin, "sales"))) return { error: "нет доступа к разделу «Отдел продаж»" };
       return { salesLeads: await serializeLeads() };
     }
     case "sales_add": {
-      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasTabAccess(userId, member, isAdmin, "sales"))) return { error: "нет доступа к разделу «Отдел продаж»" };
       const f = action.fields || {};
       await d2.createSalesLead({ name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status, added_by: userId, added_by_name: member?.name || String(userId) });
       return { salesLeads: await serializeLeads() };
     }
     case "sales_update": {
-      if (!(await hasSalesAccess(userId, member, isAdmin))) return { error: "нет доступа к разделу «Отдел продаж»" };
+      if (!(await hasTabAccess(userId, member, isAdmin, "sales"))) return { error: "нет доступа к разделу «Отдел продаж»" };
       const f = action.fields || {};
       await d2.updateSalesLead(+action.id, { name: f.name, niche: f.niche, instagram: f.instagram, phone: f.phone, called_at: f.called_at, response: f.response, status: f.status });
       return { salesLeads: await serializeLeads() };
+    }
+    // ---- umc.uz: воронка привлечения профилей на площадку ----
+    case "umc_list": {
+      if (!(await hasTabAccess(userId, member, isAdmin, "umc"))) return { error: "нет доступа к разделу umc.uz" };
+      return { umcLeads: await serializeUmc() };
+    }
+    case "umc_add": {
+      if (!(await hasTabAccess(userId, member, isAdmin, "umc"))) return { error: "нет доступа к разделу umc.uz" };
+      const f = action.fields || {};
+      await d2.createUmcLead({ ...f, added_by: userId, added_by_name: member?.name || String(userId) });
+      return { umcLeads: await serializeUmc() };
+    }
+    case "umc_update": {
+      if (!(await hasTabAccess(userId, member, isAdmin, "umc"))) return { error: "нет доступа к разделу umc.uz" };
+      const f = action.fields || {};
+      await d2.updateUmcLead(+action.id, {
+        kind: f.kind, name: f.name, category: f.category, instagram: f.instagram, phone: f.phone,
+        email: f.email, followers: f.followers, city: f.city, note: f.note, profile_url: f.profile_url, status: f.status,
+      });
+      return { umcLeads: await serializeUmc() };
+    }
+    case "umc_delete": {
+      if (!isAdmin) return { umcLeads: await serializeUmc() };
+      await d2.deleteUmcLead(+action.id);
+      return { umcLeads: await serializeUmc() };
     }
     case "sales_delete": {
       if (!isAdmin) return { salesLeads: await serializeLeads() };
