@@ -34,16 +34,16 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
-  manager: ["home", "board", "tasks", "tz", "plan", "calendar", "work", "analytics", "report"],
-  pm: ["home", "board", "tasks", "tz", "plan", "calendar", "work", "analytics", "report"],
-  videographer: ["home", "mywork", "tasks"],
-  editor: ["home", "mywork", "tasks"],
-  designer: ["home", "mywork", "tasks"],
-  sales: ["home", "sales"],
-  member: ["home", "tasks"],
+  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales"],
+  manager: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
+  pm: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
+  videographer: ["home", "mywork", "tasks", "week"],
+  editor: ["home", "mywork", "tasks", "week"],
+  designer: ["home", "mywork", "tasks", "week"],
+  sales: ["home", "sales", "tasks", "week"],
+  member: ["home", "tasks", "week"],
 };
-const ALL_TABS = ["home", "board", "tasks", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
+const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -141,7 +141,7 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
 }
 async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin: boolean): Promise<boolean> {
   if (isAdmin) return true;
@@ -152,6 +152,12 @@ async function hasSalesAccess(userId: number, member: db.Member | null, isAdmin:
 // съёмки для календаря — читаются напрямую из shoot_date/shoot_time/shoot_manager
 // пунктов контент-плана (video), а не отдельной таблицей, чтобы календарь и таблица
 // всегда показывали одно и то же
+// "YYYY-MM-DD" + смещение в днях → UTC-мс полуночи этого дня по Ташкенту (null, если формат не тот)
+function weekDayMs(iso: string, addDays: number): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3]) - 5 * 3600 * 1000 + addDays * 24 * 3600 * 1000;
+}
 async function calendarRestrictionFor(userId: number, member: db.Member | null, isAdmin: boolean): Promise<number[] | null> {
   const roles = isAdmin ? ["admin"] : db.memberRoleList(member);
   if (isAdmin || roles.includes("pm") || !roles.includes("manager")) return null;
@@ -311,6 +317,7 @@ export async function getData(userId: number) {
 
   let team: any[] = [];
   let teamAll: any[] = [];
+  let assignable: any[] = [];
   let specialists: Record<string, any[]> = { video: [], design: [], edit: [] };
   if (canConfirm) {
     const allTasks = await d2.allTasksBulk();
@@ -340,6 +347,13 @@ export async function getData(userId: number) {
     for (const [sec, cfg] of Object.entries(SECTION)) {
       specialists[sec] = members.filter((m) => db.memberRoleList(m).includes(cfg.roleKey)).map((m) => ({ id: m.telegram_id, name: m.name || m.username || String(m.telegram_id) }));
     }
+    // кому можно назначить задачу — ВСЕ зарегистрированные, а не только «рабочие» роли:
+    // отдел продаж / сотрудник без роли тоже должны быть доступны как исполнители
+    assignable = members.map((m) => ({
+      id: m.telegram_id,
+      name: m.name || m.username || String(m.telegram_id),
+      role: ROLE_LABEL_RU[isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m)] || "Сотрудник",
+    }));
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
     const groupsBulk = await d2.getMemberGroupsBulk(members.map((m) => m.telegram_id));
     const projectsBulk = await d2.getMemberProjectsBulk(members.map((m) => m.telegram_id));
@@ -377,7 +391,7 @@ export async function getData(userId: number) {
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
-    confirmable, team, teamAll, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
+    confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads,
     ...calendarExtra,
     subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
@@ -736,7 +750,7 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
       const patch: any = { title: JSON.stringify(data) };
       if (f.format !== undefined) patch.format = f.format || null;
       if (f.type) patch.type = f.type;
@@ -754,7 +768,7 @@ export async function doAction(userId: number, action: any) {
       const d = parseItemData((it as any).title);
       if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const p = action.patch || {};
-      for (const k of ["theme", "script", "reference", "props", "shoot_date", "shoot_time", "shoot_manager", "deadline"]) if (k in p) (d as any)[k] = p[k];
+      for (const k of ["theme", "script", "reference", "props", "location", "shoot_date", "shoot_time", "shoot_manager", "deadline"]) if (k in p) (d as any)[k] = p[k];
       d.last_edited_by = member?.name || String(userId);
       const patch: any = { title: JSON.stringify(d) };
       if (p.format !== undefined) patch.format = p.format || null;
@@ -764,6 +778,44 @@ export async function doAction(userId: number, action: any) {
       await d2.updateItem(+action.id, patch);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
+    }
+    // ---- недельный план: обычные задачи с дедлайном внутри выбранной недели ----
+    // (не отдельная таблица — так они попадают в «Мои задачи», напоминания и статистику)
+    case "week_tasks": {
+      const canPlan = isAdmin || role === "manager" || db.memberRoleList(member).includes("pm");
+      const all = await d2.allTasksBulk();
+      const fromMs = weekDayMs(String(action.weekStart || ""), 0);
+      if (fromMs === null) return { weekTasks: [], weekPlanner: canPlan };
+      const toMs = fromMs + 7 * 24 * 3600 * 1000;
+      const inWeek = all.filter((t) => {
+        if (!t.deadline) return false;
+        const ms = new Date(t.deadline).getTime();
+        return ms >= fromMs && ms < toMs && (canPlan || t.assignee_id === userId);
+      });
+      const nameById = new Map((await db.listMembers()).map((m) => [m.telegram_id, m.name || m.username || String(m.telegram_id)]));
+      return {
+        weekPlanner: canPlan,
+        weekTasks: inWeek.map((t) => ({
+          id: t.id, title: t.title, status: t.status,
+          assigneeId: t.assignee_id, assigneeName: t.assignee_id ? nameById.get(t.assignee_id) || t.assignee_name || "" : t.assignee_name || "",
+          day: new Date(new Date(t.deadline as string).getTime() + 5 * 3600 * 1000).toISOString().slice(0, 10),
+        })),
+      };
+    }
+    case "week_add": {
+      if (!isAdmin && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const title = String(action.title || "").trim();
+      const day = String(action.day || "");
+      const assigneeId = +action.assigneeId;
+      if (!title) return { error: "впиши задачу" };
+      if (!assigneeId) return { error: "выбери исполнителя" };
+      const dueMs = weekDayMs(day, 0);
+      if (dueMs === null) return { error: "неверный день" };
+      const ex = await db.getMember(assigneeId);
+      const deadline = new Date(dueMs + 18 * 3600 * 1000).toISOString(); // 18:00 Ташкента
+      await d2.createAdhocTask({ title, assignee_id: ex?.telegram_id ?? null, assignee_name: ex?.name ?? null, deadline });
+      if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Задача на ${day.split("-").reverse().join(".")}: ${title}`); } catch {} }
+      return { ok: true };
     }
     case "calendar_shoots": {
       const myRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
