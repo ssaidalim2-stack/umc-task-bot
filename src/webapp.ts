@@ -149,6 +149,15 @@ async function hasTabAccess(userId: number, member: db.Member | null, isAdmin: b
   if (customTabs) return customTabs.includes(tab);
   return db.memberRoleList(member).some((r) => (TABS_BY_ROLE[r] || []).includes(tab));
 }
+// отсутствующая таблица — самая вероятная причина сбоя тут (миграция не выполнена),
+// поэтому объясняем это по-человечески, а не кодом PostgREST
+function umcDbError(e: any): string {
+  const msg = String(e?.message || e);
+  if (/umc_leads/.test(msg) && /(schema cache|does not exist|not find)/i.test(msg)) {
+    return "Раздел umc.uz ещё не создан в базе: выполни миграцию supabase/migration_v5_umc.sql в Supabase → SQL Editor.";
+  }
+  return "Не удалось сохранить: " + msg;
+}
 async function serializeUmc() {
   const rows = await d2.listUmcLeads();
   return rows.map((l) => ({
@@ -740,16 +749,19 @@ export async function doAction(userId: number, action: any) {
     case "umc_add": {
       if (!(await hasTabAccess(userId, member, isAdmin, "umc"))) return { error: "нет доступа к разделу umc.uz" };
       const f = action.fields || {};
-      await d2.createUmcLead({ ...f, added_by: userId, added_by_name: member?.name || String(userId) });
+      try { await d2.createUmcLead({ ...f, added_by: userId, added_by_name: member?.name || String(userId) }); }
+      catch (e: any) { return { error: umcDbError(e) }; }
       return { umcLeads: await serializeUmc() };
     }
     case "umc_update": {
       if (!(await hasTabAccess(userId, member, isAdmin, "umc"))) return { error: "нет доступа к разделу umc.uz" };
       const f = action.fields || {};
-      await d2.updateUmcLead(+action.id, {
-        kind: f.kind, name: f.name, category: f.category, instagram: f.instagram, phone: f.phone,
-        email: f.email, followers: f.followers, city: f.city, note: f.note, profile_url: f.profile_url, status: f.status,
-      });
+      try {
+        await d2.updateUmcLead(+action.id, {
+          kind: f.kind, name: f.name, category: f.category, instagram: f.instagram, phone: f.phone,
+          email: f.email, followers: f.followers, city: f.city, note: f.note, profile_url: f.profile_url, status: f.status,
+        });
+      } catch (e: any) { return { error: umcDbError(e) }; }
       return { umcLeads: await serializeUmc() };
     }
     case "umc_delete": {

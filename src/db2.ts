@@ -418,17 +418,21 @@ export async function listUmcLeads(): Promise<UmcLead[]> {
   const { data } = await supabase.from("umc_leads").select("*").order("created_at", { ascending: false });
   return (data as UmcLead[]) ?? [];
 }
+// пишущие операции кидают ошибку наверх — иначе сбой БД (нет таблицы, нет колонки)
+// выглядел бы для пользователя как успешное сохранение в пустоту
 export async function createUmcLead(input: Partial<UmcLead> & { added_by: number; added_by_name: string }): Promise<void> {
-  await supabase.from("umc_leads").insert({
+  const { error } = await supabase.from("umc_leads").insert({
     kind: input.kind || "blogger", name: input.name || null, category: input.category || null,
     instagram: input.instagram || null, phone: input.phone || null, email: input.email || null,
     followers: input.followers || null, city: input.city || null, note: input.note || null,
     profile_url: input.profile_url || null, status: input.status || "new",
     added_by: input.added_by, added_by_name: input.added_by_name,
   });
+  if (error) throw new Error(error.message);
 }
 export async function updateUmcLead(id: number, patch: Partial<UmcLead>): Promise<void> {
-  await supabase.from("umc_leads").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+  const { error } = await supabase.from("umc_leads").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
 }
 export async function deleteUmcLead(id: number): Promise<void> {
   await supabase.from("umc_leads").delete().eq("id", id);
