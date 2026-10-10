@@ -52,6 +52,9 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:74px;font-size:15px;-webkit-font-smoothing:antialiased}
   header{padding:16px 16px 8px}
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .thbtn{flex:0 0 auto;width:38px;height:38px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:17px;cursor:pointer;line-height:1;transition:transform .12s ease}
+  .thbtn:active{transform:scale(.92)}
   header h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.2px}
   header .sub{color:var(--hint);font-size:13px;margin-top:3px;font-weight:500}
   .wrap{padding:8px 12px}
@@ -164,7 +167,7 @@
 <body>
 <div id="splash"></div>
 <header>
-  <h1 id="brand"></h1>
+  <div class="hrow"><h1 id="brand"></h1><button id="themeBtn" class="thbtn" title="Тема оформления"></button></div>
   <div class="sub" id="period">загрузка…</div>
 </header>
 <div class="wrap" id="view"></div>
@@ -173,13 +176,31 @@
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 // tg.colorScheme приходит всегда, в отличие от набора --tg-theme-*; по нему и ставим тему
+// 'auto' — как в Telegram, иначе принудительно светлая/тёмная. Выбор запоминается на устройстве.
+let THEME_PREF='auto';
+try{ THEME_PREF=localStorage.getItem('umc_theme')||'auto'; }catch(e){}
+const THEME_ICON={auto:'🌓',light:'☀️',dark:'🌙'};
 function applyTheme(){
   try{
-    const sc=tg.colorScheme==='dark'?'dark':tg.colorScheme==='light'?'light':'';
+    let sc;
+    if(THEME_PREF==='light'||THEME_PREF==='dark') sc=THEME_PREF;
+    else sc=tg.colorScheme==='dark'?'dark':tg.colorScheme==='light'?'light':'';
     if(sc) document.documentElement.setAttribute('data-theme',sc);
     else document.documentElement.removeAttribute('data-theme');
+    const b=document.getElementById('themeBtn');
+    if(b){ b.textContent=THEME_ICON[THEME_PREF]; b.title='Тема: '+(THEME_PREF==='auto'?'как в Telegram':THEME_PREF==='light'?'светлая':'тёмная')+' — нажми, чтобы сменить'; }
   }catch(e){}
 }
+function cycleTheme(){
+  THEME_PREF = THEME_PREF==='auto' ? 'light' : THEME_PREF==='light' ? 'dark' : 'auto';
+  try{ localStorage.setItem('umc_theme',THEME_PREF); }catch(e){}
+  applyTheme();
+  try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){}
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  const b=document.getElementById('themeBtn'); if(b) b.onclick=cycleTheme;
+  applyTheme();
+});
 applyTheme();
 try{ tg.onEvent('themeChanged', applyTheme); }catch(e){}
 // заставка с логотипом на время первой загрузки
