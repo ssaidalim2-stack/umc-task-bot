@@ -34,16 +34,16 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales", "umc"],
-  manager: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
-  pm: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "work", "analytics", "report"],
+  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales", "umc", "stories"],
+  manager: ["home", "board", "tasks", "week", "tz", "plan", "stories", "calendar", "work", "analytics", "report"],
+  pm: ["home", "board", "tasks", "week", "tz", "plan", "stories", "calendar", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks", "week"],
   editor: ["home", "mywork", "tasks", "week"],
   designer: ["home", "mywork", "tasks", "week"],
   sales: ["home", "sales", "umc", "tasks", "week"],
   member: ["home", "tasks", "week"],
 };
-const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales", "umc"];
+const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales", "umc", "stories"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -185,6 +185,16 @@ function dailyWhoLabel(raw: string, members: db.Member[]): string {
   }
   return who;
 }
+async function serializeStories(projectId: number) {
+  const plan = await d2.getActivePlan(projectId);
+  if (!plan) return [];
+  const items = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "story");
+  return items.map((it) => {
+    const d = parseItemData((it as any).title);
+    return { id: it.id, day: d.day || "", theme: d.theme || "", title: d.title || "",
+             material: d.material || "", format: (it as any).format || "", stage: it.stage || "planned" };
+  });
+}
 async function serializeUmc() {
   const rows = await d2.listUmcLeads();
   return rows.map((l) => ({
@@ -320,7 +330,7 @@ export async function getData(userId: number) {
   const statsProjects = visibleProjects.map((p) => {
     const its = itemsByProject.get(p.id) || [];
     const videos = its.filter((x) => x.type === "video");
-    const graphics = its.filter((x) => x.type !== "video");
+    const graphics = its.filter((x) => x.type !== "video" && x.type !== "story");
     let scripts = 0;
     const langs: any = { ru: 0, uz: 0, en: 0, none: 0 };
     for (const v of videos) {
@@ -891,6 +901,50 @@ export async function doAction(userId: number, action: any) {
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Задача на ${day.split("-").reverse().join(".")}: ${title}`); } catch {} }
       return { ok: true };
     }
+    // ---- сторис: недельный план, живёт в content_items с type='story' ----
+    // отдельной таблицы нет намеренно: та же сущность, только свой раздел и свои поля,
+    // поэтому в «Таблице» контент-плана сторис отфильтрованы и в его статистику не идут
+    case "stories_list": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      return { stories: await serializeStories(+action.projectId) };
+    }
+    case "story_add": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const pid = +action.projectId;
+      const plan = await d2.getActivePlan(pid);
+      if (!plan) return { error: "у проекта нет активного периода — создай его в Таблице" };
+      const all = await d2.listItemsByPlan(plan.id);
+      const nextIdx = all.reduce((m, i) => Math.max(m, i.idx), 0) + 1;
+      await d2.addContentItem({ plan_id: plan.id, project_id: pid, type: "story", idx: nextIdx });
+      const fresh = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "story").sort((a, b) => b.id - a.id)[0];
+      if (fresh) {
+        const d: any = { day: String(action.day || ""), theme: "", title: "", material: "" };
+        await d2.updateItem(fresh.id, { title: JSON.stringify(d), stage: "planned", status: "in_progress" });
+      }
+      return { stories: await serializeStories(pid) };
+    }
+    case "story_update": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { error: "сторис не найдена" };
+      const f = action.fields || {};
+      const d = parseItemData((it as any).title);
+      for (const k of ["day", "theme", "title", "material"]) if (k in f) d[k] = f[k] || "";
+      d.last_edited_by = member?.name || String(userId);
+      const patch: any = { title: JSON.stringify(d) };
+      if (f.format !== undefined) patch.format = f.format || null;
+      if (f.stage) { patch.stage = f.stage; patch.status = f.stage === "published" ? "done" : "in_progress"; }
+      await d2.updateItem(+action.id, patch);
+      return { stories: await serializeStories(it.project_id) };
+    }
+    case "story_delete": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { error: "сторис не найдена" };
+      await d2.deleteContentItem(it.id);
+      return { stories: await serializeStories(it.project_id) };
+    }
+
     // ---- отчёт клиенту в его группу ----
     case "client_report_preview": {
       if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
