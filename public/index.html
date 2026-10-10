@@ -276,7 +276,7 @@ function buildFullScriptText(it,includeExtras){
   return parts.join('\n\n');
 }
 let TBL_SELECTED=new Set();
-function canEdit(){ return DATA.user.role==='admin'||DATA.user.role==='manager'; }
+function canEdit(){ const r=DATA.user.role, rs=DATA.user.roles||[r]; return ['admin','manager','pm'].some(x=>r===x||rs.includes(x)); }
 function val(id){ const e=document.getElementById(id); return e?e.value:''; }
 function captureFrames(it){ if(!it.frames) return; it.frames.forEach((fr,fi)=>{const e=document.getElementById('ftxt_'+fi); if(e) fr.text=e.value;}); }
 function captureFields(it){ if(document.getElementById('f_theme')){ it.theme=val('f_theme'); it.reference=val('f_reference'); it.props=val('f_props'); it.location=val('f_location'); it.shoot_date=val('f_shoot'); it.deadline=val('f_deadline'); } if(document.getElementById('f_script')) it.script=val('f_script'); captureFrames(it); }
@@ -730,7 +730,7 @@ function renderClientReport(){
     ? '<div class="muted">Собираю данные…</div>'
     : (CR_TEXT!=null
         ? `<textarea id="cr_text" style="min-height:220px;font-size:13px">${esc(CR_TEXT)}</textarea>
-           <div class="muted" style="font-size:11px;margin-top:4px">${CR_GROUPS?('Уйдёт в групп клиента: '+CR_GROUPS):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>'}</div>
+           <div class="muted" style="font-size:11px;margin-top:4px">${CR_GROUPS?('Уйдёт в группу клиента'+(CR_GROUPS>1?' (групп: '+CR_GROUPS+')':'')+'. Жирный текст и звёздочки Telegram отрисует сам.'):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>'}</div>
            <button class="btn full" data-crsend style="margin-top:8px" ${CR_GROUPS?'':'disabled'}>📤 Отправить клиенту</button>`
         : '');
   return `<div class="card">

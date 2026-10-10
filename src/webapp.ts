@@ -405,7 +405,7 @@ export async function getData(userId: number) {
   }
 
   return {
-    user: { id: userId, name: member?.name || "", role, is_admin: isAdmin },
+    user: { id: userId, name: member?.name || "", role, roles: memberRoles, is_admin: isAdmin },
     period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
