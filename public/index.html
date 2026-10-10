@@ -100,6 +100,17 @@
   .calcell.has-shoot.sel{box-shadow:inset 0 0 0 2px #f5a524, inset 0 0 0 4px #fff}
   .calnum{font-weight:600}
   .caldot{font-size:10px;margin-top:1px}
+  .umc-lockup{display:inline-flex;align-items:center;gap:10px;color:var(--text)}
+  .umc-words{display:flex;flex-direction:column;line-height:1}
+  .umc-words b{font-size:calc(var(--h)*0.52);font-weight:800;letter-spacing:-.02em}
+  .umc-words i{font-size:calc(var(--h)*0.21);font-style:normal;letter-spacing:.12em;opacity:.65;margin-top:2px}
+  .umc-spin{animation:umcSpin 1.1s cubic-bezier(.5,.1,.4,.9) infinite}
+  @keyframes umcSpin{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(.88)}100%{transform:rotate(360deg) scale(1)}}
+  .umc-loader{display:flex;flex-direction:column;align-items:center;gap:10px;padding:26px 0}
+  #splash{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s ease}
+  #splash.hide{opacity:0;pointer-events:none}
+  #splash .umc-lockup{animation:umcIn .5s ease both}
+  @keyframes umcIn{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
   .wkday{padding:12px 14px;margin-top:8px}
   .wktoday{box-shadow:inset 0 0 0 2px var(--btn)}
   .wkitem{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--line);font-size:14px}
@@ -151,8 +162,9 @@
 </style>
 </head>
 <body>
+<div id="splash"></div>
 <header>
-  <h1>📊 UMC Task</h1>
+  <h1 id="brand"></h1>
   <div class="sub" id="period">загрузка…</div>
 </header>
 <div class="wrap" id="view"></div>
@@ -170,6 +182,12 @@ function applyTheme(){
 }
 applyTheme();
 try{ tg.onEvent('themeChanged', applyTheme); }catch(e){}
+// заставка с логотипом на время первой загрузки
+function paintBrand(){
+  const sp=document.getElementById('splash'); if(sp&&!sp.dataset.filled){ sp.innerHTML=umcLockup(54); sp.dataset.filled='1'; }
+  const b=document.getElementById('brand'); if(b&&!b.dataset.filled){ b.innerHTML=umcLockup(30); b.dataset.filled='1'; }
+}
+function hideSplash(){ const sp=document.getElementById('splash'); if(sp) sp.classList.add('hide'); }
 // на iPad/десктопе Mini App иначе открывается крошечным модальным окном — просим настоящий полный экран
 try{ if(tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
@@ -370,7 +388,12 @@ async function api(method, body){
   return r.json();
 }
 function haptic(){ try{ tg.HapticFeedback.impactOccurred('light'); }catch(e){} }
-async function load(){ try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; } }
+async function load(){
+  paintBrand();
+  try{ DATA=await api('GET'); if(!TAB||!DATA.tabs.includes(TAB)) TAB=DATA.tabs[0]; buildTabs(); render(); }
+  catch(e){ document.getElementById('view').innerHTML='<div class="empty">Ошибка загрузки. Открой через кнопку в боте.</div>'; }
+  finally{ hideSplash(); }
+}
 // тихое автообновление — чтобы правки с другого устройства подтягивались сами, без ручного
 // перезахода. Пропускаем, пока идёт активное редактирование (открыта карточка пункта или
 // фокус стоит в поле ввода), чтобы не затирать то, что человек ещё не сохранил.
@@ -412,6 +435,24 @@ async function busyClick(el, fn){
 }
 
 function bar(done,total){ const p=total?Math.round(done/total*100):0; return `<div class="bar"><i style="width:${p}%"></i></div>`; }
+// ---- логотип UMC (inline SVG: чёткий на любом экране, текст берёт цвет темы) ----
+function umcMark(size,spin){
+  return `<svg viewBox="0 0 120 120" width="${size}" height="${size}" class="${spin?'umc-spin':''}" aria-hidden="true">
+    <defs><linearGradient id="umcg${spin?'s':''}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#c7cbd0"/>
+      <stop offset=".75" stop-color="#8f959b"/><stop offset="1" stop-color="#6b7177"/>
+    </linearGradient></defs>
+    <rect x="46" y="16" width="56" height="56" rx="2" fill="currentColor" opacity=".13"/>
+    <path d="M18 92 A74 74 0 0 1 92 18 L92 92 Z" fill="url(#umcg${spin?'s':''})"/>
+  </svg>`;
+}
+function umcLockup(h){
+  return `<span class="umc-lockup" style="--h:${h}px">${umcMark(h,false)}
+    <span class="umc-words"><b>umc</b><i>marketing team</i></span></span>`;
+}
+function umcLoader(text){
+  return `<div class="umc-loader">${umcMark(46,true)}<div class="muted" style="font-size:12px">${text||'Загрузка…'}</div></div>`;
+}
 function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 // нативный пикер даты/времени (крутящаяся "воронка" на iOS) рядом с текстовым полем —
 // формат хранения (ДД.ММ.ГГГГ[ ЧЧ:ММ]) не меняется, пикер просто форматирует свой выбор в него,
@@ -504,7 +545,7 @@ function renderTable(){
     <button class="btn full" data-np-create style="margin-top:8px">Создать таблицу</button></div>` : '';
 
   let rows;
-  if(TBL_ITEMS===null) rows='<div class="muted">Загрузка…</div>';
+  if(TBL_ITEMS===null) rows=umcLoader();
   else if(!TBL_ITEMS.length) rows='<div class="muted">Пунктов пока нет. Добавь ниже.</div>';
   else rows=TBL_ITEMS.map((it,i)=>rowHtml(it,i+1)).join('');
 
@@ -787,7 +828,7 @@ function renderClientReport(){
   if(CR_PROJ==null||!projs.some(p=>p.id===CR_PROJ)) CR_PROJ=projs[0].id;
   const pills=projs.map(p=>`<div class="pill ${p.id===CR_PROJ?'active':''}" data-crproj="${p.id}">${esc(p.name)}</div>`).join('');
   const preview=CR_LOADING
-    ? '<div class="muted">Собираю данные…</div>'
+    ? umcLoader('Собираю данные…')
     : (CR_TEXT!=null
         ? `<textarea id="cr_text" style="min-height:220px;font-size:13px">${esc(CR_TEXT)}</textarea>
            <div class="muted" style="font-size:11px;margin-top:4px">${CR_GROUPS?('Уйдёт в группу клиента'+(CR_GROUPS>1?' (групп: '+CR_GROUPS+')':'')+'. Жирный текст и звёздочки Telegram отрисует сам.'):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>'}</div>
@@ -1352,7 +1393,7 @@ function renderWeek(){
   const thisMon=wkKey(mondayOf(tashkentNow()));
   const diffW=Math.round((new Date(WK_START+'T00:00:00Z')-new Date(thisMon+'T00:00:00Z'))/604800000);
   const weekLabel=diffW===0?'эта неделя':diffW===1?'следующая':diffW===-1?'прошлая':(diffW>0?`через ${diffW} нед.`:`${-diffW} нед. назад`);
-  if(WK_TASKS===null) return `<div class="card"><h3>🗓 Недельный план</h3><div class="muted">Загрузка…</div></div>`;
+  if(WK_TASKS===null) return `<div class="card"><h3>🗓 Недельный план</h3>${umcLoader()}</div>`;
 
   const nowKey=wkKey(tashkentNow());
   // кого показываем: планировщик видит всех, остальные — только себя

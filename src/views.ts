@@ -225,3 +225,81 @@ function cycleRange(): [string, string] {
   const end = new Date(Date.UTC(y, m + 1, 14)).toISOString().slice(0, 10);
   return [start.toISOString().slice(0, 10), end <= today ? end : today];
 }
+
+// ---------- сводки в группу команды (утро 10:00 и итоги дня 23:00) ----------
+// Считаем по фактам из задач: дедлайн, статус и момент последнего изменения.
+// "Сделано поздно" = закрыто позже дедлайна; "просрочено" = дедлайн прошёл, а задача открыта.
+type TeamTask = { title: string; deadline: string | null; status: string; updated_at?: string; assignee_id: number | null; assignee_name: string | null };
+
+function ruDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(new Date(iso).getTime() + 5 * 3600 * 1000);
+  return d.toISOString().slice(0, 10).split("-").reverse().join(".");
+}
+function ruDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(new Date(iso).getTime() + 5 * 3600 * 1000).toISOString();
+  return d.slice(8, 10) + "." + d.slice(5, 7) + " " + d.slice(11, 16);
+}
+
+async function teamTasksByPerson(): Promise<{ name: string; tasks: TeamTask[] }[]> {
+  const [tasks, members] = await Promise.all([d2.allTasksBulk(), (await import("./db")).listMembers()]);
+  const nameById = new Map(members.map((m) => [m.telegram_id, m.name || m.username || String(m.telegram_id)]));
+  const groups = new Map<string, TeamTask[]>();
+  for (const t of tasks as any[]) {
+    const name = t.assignee_id ? nameById.get(t.assignee_id) || t.assignee_name || "Без исполнителя" : t.assignee_name || "Без исполнителя";
+    const arr = groups.get(name) || [];
+    arr.push(t as TeamTask);
+    groups.set(name, arr);
+  }
+  return [...groups.entries()].map(([name, tasks]) => ({ name, tasks })).sort((a, b) => a.name.localeCompare(b.name, "ru"));
+}
+
+// Утро: что у кого в работе на сегодня и что уже горит
+export async function buildTeamMorning(): Promise<string> {
+  const now = Date.now();
+  const today = new Date(now + 5 * 3600 * 1000).toISOString().slice(0, 10);
+  const people = await teamTasksByPerson();
+  const L = [`☀️ *Задачи на сегодня — ${today.split("-").reverse().join(".")}*`, ""];
+  let any = false;
+  for (const p of people) {
+    const open = p.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled");
+    if (!open.length) continue;
+    any = true;
+    const overdue = open.filter((t) => t.deadline && new Date(t.deadline).getTime() < now);
+    const rest = open.filter((t) => !overdue.includes(t));
+    L.push(`*${p.name}*`);
+    for (const t of overdue) L.push(`  🔴 ${t.title} — просрочено с ${ruDate(t.deadline)}`);
+    for (const t of rest) L.push(`  • ${t.title}${t.deadline ? ` — до ${ruDate(t.deadline)}` : ""}`);
+    L.push("");
+  }
+  if (!any) L.push("Открытых задач нет 🎉");
+  return L.join("\n").trim();
+}
+
+// Вечер: итоги дня по каждому — что закрыто, что закрыто с опозданием, что просрочено, что ещё в работе
+export async function buildTeamEvening(): Promise<string> {
+  const now = Date.now();
+  const todayIso = new Date(now + 5 * 3600 * 1000).toISOString().slice(0, 10);
+  const people = await teamTasksByPerson();
+  const L = [`🌙 *Итоги дня — ${todayIso.split("-").reverse().join(".")}*`, ""];
+  let any = false;
+  for (const p of people) {
+    const doneToday = p.tasks.filter((t) => t.status === "done" && t.updated_at && new Date(new Date(t.updated_at).getTime() + 5 * 3600 * 1000).toISOString().slice(0, 10) === todayIso);
+    const onTime = doneToday.filter((t) => !t.deadline || new Date(t.updated_at!).getTime() <= new Date(t.deadline).getTime());
+    const late = doneToday.filter((t) => t.deadline && new Date(t.updated_at!).getTime() > new Date(t.deadline).getTime());
+    const open = p.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled");
+    const overdue = open.filter((t) => t.deadline && new Date(t.deadline).getTime() < now);
+    const active = open.filter((t) => !overdue.includes(t));
+    if (!doneToday.length && !open.length) continue;
+    any = true;
+    L.push(`*${p.name}*`);
+    for (const t of onTime) L.push(`  ✅ ${t.title} — сдано ${ruDateTime(t.updated_at)}`);
+    for (const t of late) L.push(`  ⚠️ ${t.title} — сдано ${ruDateTime(t.updated_at)}, дедлайн был ${ruDate(t.deadline)}`);
+    for (const t of overdue) L.push(`  🔴 ${t.title} — не сдано, дедлайн ${ruDate(t.deadline)}`);
+    for (const t of active) L.push(`  🕒 ${t.title}${t.deadline ? ` — срок до ${ruDate(t.deadline)}` : " — без срока"}`);
+    L.push("");
+  }
+  if (!any) L.push("Сегодня задач не было.");
+  return L.join("\n").trim();
+}

@@ -368,6 +368,11 @@ export async function bindingsFor(projectId: number | null, specialty: string): 
   return rows.filter((b) => !clientChats.has(b.chat_id));
 }
 // все чаты, которые где-либо помечены как клиентские (по любому проекту)
+// группа всей команды — куда идут утренняя сводка задач и вечерние итоги дня
+export async function teamBindings(): Promise<GroupBinding[]> {
+  const { data } = await supabase.from("group_bindings").select("*").eq("specialty", "team");
+  return (data as GroupBinding[]) ?? [];
+}
 export async function clearChatBindings(chatId: number): Promise<number> {
   const { data } = await supabase.from("group_bindings").delete().eq("chat_id", chatId).select("id");
   return ((data as any[]) ?? []).length;

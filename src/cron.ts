@@ -2,7 +2,7 @@ import * as db from "./db";
 import * as d2 from "./db2";
 import { t, Lang } from "./i18n";
 import { bot, safeSend } from "./bot";
-import { buildReport } from "./views";
+import { buildReport, buildTeamMorning, buildTeamEvening } from "./views";
 import { metaConfigured, pullSnapshot } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
 
@@ -42,6 +42,10 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   if ([8, 14, 20].includes(hour)) {
     if (await d2.claimMarker(`digest_${hour}`, day)) sent += await sendDigests();
   }
+
+  // сводки в группу команды: утром задачи на день, вечером итоги
+  if (hour === 10 && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(await buildTeamMorning());
+  if (hour === 23 && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(await buildTeamEvening());
 
   // отчёты в 08:00 утра
   if (hour === 8) {
@@ -130,6 +134,17 @@ async function sendDigests(): Promise<number> {
   const allOpen = (await d2.listOpenTasks()).filter((t) => t.status === "new" || t.status === "in_progress");
   if (allOpen.length === 0) {
     for (const a of await db.listAdmins()) { await safeSend(a.telegram_id, "🎉 Все задачи выполнены! Отличная работа команды."); sent++; }
+  }
+  return sent;
+}
+
+// ---------- сводки в группу команды ----------
+async function sendToTeam(text: string): Promise<number> {
+  if (!text.trim()) return 0;
+  let sent = 0;
+  for (const b of await d2.teamBindings()) {
+    try { await bot.api.sendMessage(b.chat_id, text, { parse_mode: "Markdown" }); sent++; }
+    catch { try { await bot.api.sendMessage(b.chat_id, text); sent++; } catch {} }
   }
   return sent;
 }
