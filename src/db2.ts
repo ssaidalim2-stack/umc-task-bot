@@ -352,11 +352,29 @@ export async function clientBindings(projectId: number): Promise<GroupBinding[]>
   const { data } = await supabase.from("group_bindings").select("*").eq("project_id", projectId).eq("specialty", "client");
   return (data as GroupBinding[]) ?? [];
 }
+// ВАЖНО: чат, привязанный как 'client', — это группа ЗАКАЗЧИКА. Туда уходит только
+// отчёт и ничего больше: там нельзя показывать внутреннюю кухню (ТЗ, сценарии, файлы,
+// движение по этапам). Фильтр стоит именно здесь, а не на каждом месте отправки, —
+// через эту функцию проходят ВСЕ внутренние рассылки в группы, так что обойти её
+// случайной привязкой в будущем нельзя.
 export async function bindingsFor(projectId: number | null, specialty: string): Promise<GroupBinding[]> {
+  if (specialty === "client") return [];           // клиентские отчёты идут через clientBindings()
   let q = supabase.from("group_bindings").select("*").in("specialty", [specialty, "all"]);
   q = projectId ? q.or(`project_id.eq.${projectId},project_id.is.null`) : q.is("project_id", null);
   const { data } = await q;
-  return (data as GroupBinding[]) ?? [];
+  const rows = (data as GroupBinding[]) ?? [];
+  if (!rows.length) return rows;
+  const clientChats = await clientChatIds();
+  return rows.filter((b) => !clientChats.has(b.chat_id));
+}
+// все чаты, которые где-либо помечены как клиентские (по любому проекту)
+export async function clearChatBindings(chatId: number): Promise<number> {
+  const { data } = await supabase.from("group_bindings").delete().eq("chat_id", chatId).select("id");
+  return ((data as any[]) ?? []).length;
+}
+export async function clientChatIds(): Promise<Set<number>> {
+  const { data } = await supabase.from("group_bindings").select("chat_id").eq("specialty", "client");
+  return new Set(((data as { chat_id: number }[]) ?? []).map((r) => r.chat_id));
 }
 
 // ---------- settings & cron markers ----------

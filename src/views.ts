@@ -143,14 +143,32 @@ export async function buildClientReport(projectId: number, note: string): Promis
   if (scripted) L.push(`📝 Сценарии готовы, ждут съёмки: ${scripted}`);
   if (s.graphicTotal) L.push(`🖼 Графика: *${s.graphicDone}* из ${s.graphicTotal}`);
 
-  // --- съёмки за период ---
+  // --- съёмки и ближайшая публикация ---
   const items = (await d2.getAllItems()).filter((i) => i.project_id === projectId && i.type === "video");
+  const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
   const shootDays = new Set<string>();
+  const upcoming: { day: string; theme: string }[] = [];
   for (const it of items) {
-    const d = parseShootDay(parseItemData((it as any).title).shoot_date);
+    const data = parseItemData((it as any).title);
+    const d = parseShootDay(data.shoot_date);
     if (d) shootDays.add(d);
+    // ближайший выход: ещё не опубликовано и дедлайн сегодня или позже
+    if (it.stage !== "published") {
+      const dl = parseShootDay(data.deadline);
+      if (dl && dl >= today) upcoming.push({ day: dl, theme: (data.theme || "").trim() });
+    }
   }
-  if (shootDays.size) L.push(`📅 Съёмочных дней: ${shootDays.size}`);
+  const past = [...shootDays].filter((d) => d <= today).sort();
+  const future = [...shootDays].filter((d) => d > today).sort();
+  const ru = (iso: string) => iso.split("-").reverse().join(".");
+  if (shootDays.size) L.push(`📅 Съёмочных дней за период: ${shootDays.size}`);
+  if (past.length) L.push(`🎥 Последняя съёмка: ${ru(past[past.length - 1])}`);
+  if (future.length) L.push(`🗓 Ближайшая съёмка: ${ru(future[0])}`);
+  upcoming.sort((a, b) => a.day.localeCompare(b.day));
+  if (upcoming.length) {
+    const n = upcoming[0];
+    L.push(`⏭ Следующий выход: ${ru(n.day)}${n.theme ? ` — ${n.theme}` : ""}`);
+  }
 
   // --- реклама и Instagram ---
   const map = await meta.getMetaMap();
