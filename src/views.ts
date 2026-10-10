@@ -122,13 +122,13 @@ export async function buildReport(title: string): Promise<{ text: string; chartU
 export async function buildClientReport(projectId: number, note: string): Promise<string> {
   const proj = await d2.getProject(projectId);
   if (!proj) return "";
-  const plan = await d2.getActivePlan(projectId);
   const s = await d2.planSummary(projectId);
   const { parseItemData, parseShootDay } = await import("./webapp");
 
   const L: string[] = [];
+  const nowRu = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10).split("-").reverse().join(".");
   L.push(`📊 *Отчёт по проекту ${proj.name}*`);
-  if (plan?.period) L.push(`_Период: ${plan.period}_`);
+  L.push(`Дата: ${nowRu}`);
   L.push("");
 
   // --- контент ---
@@ -165,10 +165,7 @@ export async function buildClientReport(projectId: number, note: string): Promis
   if (past.length) L.push(`🎥 Последняя съёмка: ${ru(past[past.length - 1])}`);
   if (future.length) L.push(`🗓 Ближайшая съёмка: ${ru(future[0])}`);
   upcoming.sort((a, b) => a.day.localeCompare(b.day));
-  if (upcoming.length) {
-    const n = upcoming[0];
-    L.push(`⏭ Следующий выход: ${ru(n.day)}${n.theme ? ` — ${n.theme}` : ""}`);
-  }
+  if (upcoming.length) L.push(`⏭ Следующий выход: ${ru(upcoming[0].day)}`);
 
   // --- реклама и Instagram ---
   const map = await meta.getMetaMap();
@@ -188,11 +185,7 @@ export async function buildClientReport(projectId: number, note: string): Promis
       if (spend) L.push(`💰 Потрачено: ${spend.toFixed(2)} ${camps[0]?.currency || "USD"}`);
       if (impressions) L.push(`👁 Показы: ${impressions.toLocaleString("ru-RU")}`);
       if (clicks) L.push(`🖱 Клики: ${clicks.toLocaleString("ru-RU")}`);
-    } catch {
-      L.push("");
-      L.push("*Реклама*");
-      L.push("⚠️ Данные по рекламе временно недоступны");
-    }
+    } catch { /* нет данных — блока просто не будет, клиенту не показываем кухню */ }
   }
 
   if (meta.metaConfigured() && bind.ig) {
