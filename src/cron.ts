@@ -16,8 +16,6 @@ function langOf(m: db.Member | null): Lang {
 }
 
 export async function runReminders(): Promise<{ checked: number; sent: number }> {
-  // общий выключатель — админ временно ставит все авто-уведомления на паузу, пока не пересоберёт список того, что нужно слать
-  if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
   let sent = 0;
   const now = Date.now();
   const local = new Date(now + TZ_OFFSET);
@@ -25,6 +23,17 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   const dow = local.getUTCDay(); // 0=Sun
   const dom = local.getUTCDate();
   const day = local.toISOString().slice(0, 10);
+
+  // Meta (IG + Ads): дневной снэпшот за вчера, в 07:00 — до утреннего отчёта.
+  // Сбор данных идёт ВСЕГДА, даже когда уведомления на паузе: он никому ничего не шлёт,
+  // а прерывать историю цифр из-за выключенных уведомлений нельзя.
+  if (hour === 7 && metaConfigured() && (await d2.claimMarker("meta_pull", day))) {
+    const yesterday = new Date(now + TZ_OFFSET - 24 * HOUR).toISOString().slice(0, 10);
+    try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
+  }
+
+  // общий выключатель — касается только исходящих сообщений, не сбора данных выше
+  if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
 
   sent += await deadlineReminders(now);
   sent += await subscriptionReminders(day);
@@ -44,11 +53,6 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
 
   // (связь с Google-таблицами отключена — контент-план ведётся в самом боте)
 
-  // Meta (IG + Ads): дневной снэпшот за вчера, в 07:00 — до утреннего отчёта
-  if (hour === 7 && metaConfigured() && (await d2.claimMarker("meta_pull", day))) {
-    const yesterday = new Date(now + TZ_OFFSET - 24 * HOUR).toISOString().slice(0, 10);
-    try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
-  }
 
   // сброс повторяющихся задач
   if (dow === 1 && hour === 6 && (await d2.claimMarker("reset_weekly", day))) await resetRecurring("weekly");

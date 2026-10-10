@@ -345,6 +345,13 @@ export async function addBinding(chatId: number, projectId: number | null, speci
     await supabase.from("group_bindings").upsert({ chat_id: chatId, project_id: projectId, specialty }, { onConflict: "chat_id,project_id,specialty" });
   }
 }
+// группа КЛИЕНТА — только точное совпадение specialty='client'.
+// Намеренно не через bindingsFor: та подхватывает ещё и 'all', а внутренняя
+// рабочая группа, привязанная как 'all', не должна получать клиентские отчёты.
+export async function clientBindings(projectId: number): Promise<GroupBinding[]> {
+  const { data } = await supabase.from("group_bindings").select("*").eq("project_id", projectId).eq("specialty", "client");
+  return (data as GroupBinding[]) ?? [];
+}
 export async function bindingsFor(projectId: number | null, specialty: string): Promise<GroupBinding[]> {
   let q = supabase.from("group_bindings").select("*").in("specialty", [specialty, "all"]);
   q = projectId ? q.or(`project_id.eq.${projectId},project_id.is.null`) : q.is("project_id", null);

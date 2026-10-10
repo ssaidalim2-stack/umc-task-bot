@@ -863,6 +863,36 @@ export async function doAction(userId: number, action: any) {
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Задача на ${day.split("-").reverse().join(".")}: ${title}`); } catch {} }
       return { ok: true };
     }
+    // ---- отчёт клиенту в его группу ----
+    case "client_report_preview": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const pid = +action.projectId;
+      const { buildClientReport } = await import("./views");
+      const text = await buildClientReport(pid, String(action.note || ""));
+      const groups = await d2.clientBindings(pid);
+      return { reportText: text, clientGroups: groups.length };
+    }
+    case "client_report_send": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const pid = +action.projectId;
+      const groups = await d2.clientBindings(pid);
+      if (!groups.length) return { error: "К этому проекту не привязана группа клиента. Добавь бота в группу и напиши там: /bind <ключ проекта> client" };
+      // отправляем ИМЕННО то, что менеджер видел и правил в поле; пересборка на сервере
+      // молча выбросила бы его правки
+      let text = String(action.text || "").trim();
+      if (!text) {
+        const { buildClientReport } = await import("./views");
+        text = await buildClientReport(pid, String(action.note || ""));
+      }
+      if (!text) return { error: "не удалось собрать отчёт" };
+      let ok = 0;
+      for (const g of groups) {
+        try { await bot.api.sendMessage(g.chat_id, text, { parse_mode: "Markdown" }); ok++; }
+        catch { try { await bot.api.sendMessage(g.chat_id, text); ok++; } catch {} }
+      }
+      if (!ok) return { error: "не удалось отправить — проверь, что бот всё ещё в группе клиента" };
+      return { sent: ok };
+    }
     case "calendar_shoots": {
       const myRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
       if (!isAdmin && !myRoles.includes("manager") && !myRoles.includes("pm")) return { error: "нет доступа" };

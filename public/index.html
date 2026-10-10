@@ -714,7 +714,34 @@ function renderReport(){
     <div class="muted">🖼 Графика готова: <b>${t.graphicDone}/${t.graphicTotal}</b></div>${bar(t.graphicDone,t.graphicTotal)}
     <div class="muted">📌 Открытых задач: <b>${t.openTasks}</b></div></div>
     <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>
+    ${renderClientReport()}
     ${renderMeta()}`;
+}
+
+// ---- отчёт клиенту: бот сам собирает цифры, менеджер проверяет и отправляет ----
+let CR_PROJ=null, CR_TEXT=null, CR_GROUPS=0, CR_LOADING=false, CR_NOTE='';
+function renderClientReport(){
+  if(!canEdit()) return '';
+  const projs=DATA.projects||[];
+  if(!projs.length) return '';
+  if(CR_PROJ==null||!projs.some(p=>p.id===CR_PROJ)) CR_PROJ=projs[0].id;
+  const pills=projs.map(p=>`<div class="pill ${p.id===CR_PROJ?'active':''}" data-crproj="${p.id}">${esc(p.name)}</div>`).join('');
+  const preview=CR_LOADING
+    ? '<div class="muted">Собираю данные…</div>'
+    : (CR_TEXT!=null
+        ? `<textarea id="cr_text" style="min-height:220px;font-size:13px">${esc(CR_TEXT)}</textarea>
+           <div class="muted" style="font-size:11px;margin-top:4px">${CR_GROUPS?('Уйдёт в групп клиента: '+CR_GROUPS):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>'}</div>
+           <button class="btn full" data-crsend style="margin-top:8px" ${CR_GROUPS?'':'disabled'}>📤 Отправить клиенту</button>`
+        : '');
+  return `<div class="card">
+    <h3>📤 Отчёт клиенту</h3>
+    <div class="muted" style="font-size:12px">Бот соберёт цифры сам: публикации, съёмки, статус таргета и активность последних роликов. Текст можно поправить перед отправкой.</div>
+    <div class="pills">${pills}</div>
+    <div class="muted">Комментарий от себя (необязательно):</div>
+    <textarea id="cr_note" style="min-height:52px" placeholder="Что хотите добавить клиенту">${esc(CR_NOTE)}</textarea>
+    <button class="btn sm full" data-crbuild style="margin-top:8px">🧾 Сформировать отчёт</button>
+    ${preview}
+  </div>`;
 }
 
 function renderMeta(){
@@ -1347,6 +1374,26 @@ function bind(){
     });
     if(tg.showConfirm) tg.showConfirm('Удалить запись?',(ok)=>{if(ok)run();}); else run();
   };
+  document.querySelectorAll('[data-crproj]').forEach(b=>b.onclick=()=>{CR_PROJ=+b.dataset.crproj;CR_TEXT=null;render();});
+  const crb=document.querySelector('[data-crbuild]'); if(crb) crb.onclick=()=>busyClick(crb, async()=>{
+    CR_NOTE=val('cr_note')||''; CR_LOADING=true; CR_TEXT=null; render();
+    const res=await api('POST',{type:'client_report_preview',projectId:CR_PROJ,note:CR_NOTE});
+    CR_LOADING=false;
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);render();return;}
+    CR_TEXT=(res&&res.reportText)||''; CR_GROUPS=(res&&res.clientGroups)||0;
+    render();
+  });
+  const crs=document.querySelector('[data-crsend]'); if(crs) crs.onclick=()=>busyClick(crs, async()=>{
+    const edited=val('cr_text')||'';
+    const run=async()=>{
+      // отправляем ровно то, что менеджер видит в поле: правки не должны теряться
+      const res=await api('POST',{type:'client_report_send',projectId:CR_PROJ,note:'',text:edited});
+      if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+      CR_TEXT=null; render();
+      tg.showAlert&&tg.showAlert('Отчёт отправлен клиенту ✅');
+    };
+    if(tg.showConfirm) tg.showConfirm('Отправить отчёт в группу клиента?',(ok)=>{if(ok)run();}); else run();
+  });
   document.querySelectorAll('[data-wkprev]').forEach(b=>b.onclick=()=>{WK_START=wkShift(WK_START,-7);WK_DAY=null;render();});
   document.querySelectorAll('[data-wknext]').forEach(b=>b.onclick=()=>{WK_START=wkShift(WK_START,7);WK_DAY=null;render();});
   document.querySelectorAll('[data-wkemp]').forEach(b=>b.onclick=()=>{WK_EMP=+b.dataset.wkemp;WK_DAY=null;render();});
