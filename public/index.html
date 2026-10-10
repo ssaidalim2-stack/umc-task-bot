@@ -1695,8 +1695,16 @@ function bind(){
   const mst=document.querySelector('[data-metastatus]'); if(mst) mst.onclick=async()=>{
     mOut('Проверяю токен…');
     const r=await api('POST',{type:'meta_status'});
-    if(!r||r.error){mOut('⚠️ '+(r&&r.error||'ошибка'));return;}
+    if(!r){mOut('⚠️ ошибка');return;}
     if(!r.configured){mOut('Токен не задан (META_TOKEN).');return;}
+    if(r.error){
+      // показываем настоящую причину, а не «аккаунтов нет»
+      mOut('❌ Токен не работает\n\n'+r.error+'\n\nЧто делать: проверь приложение на developers.facebook.com → статус и ограничения, затем выпусти новый long-lived токен и замени META_TOKEN на Vercel.');
+      return;
+    }
+    if(r.token&&r.token.ok){
+      mOut('✅ Токен работает — '+(r.token.who||'')+(r.token.scopes&&r.token.scopes.length?('\nПрава: '+r.token.scopes.join(', ')):'')+'\n\nЗагружаю аккаунты…');
+    }
     let s='Instagram-аккаунты:\n'+(r.igAccounts||[]).map(a=>`@${a.username} (${a.src||''}) — id ${a.ig_id}`).join('\n');
     s+='\n\nРекламные кабинеты:\n'+(r.adAccounts||[]).map(a=>`${a.name}${a.src?' ('+a.src+')':''} — ${a.id}`).join('\n');
     for(const b of (r.businesses||[])){

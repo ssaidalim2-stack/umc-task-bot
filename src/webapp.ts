@@ -536,8 +536,12 @@ export async function doAction(userId: number, action: any) {
     case "meta_status": {
       if (role !== "admin") return { error: "нет доступа" };
       if (!meta.metaConfigured()) return { configured: false };
-      try { return { configured: true, ...(await meta.listAvailableAccounts()) }; }
-      catch (e: any) { return { configured: true, error: String(e.message || e) }; }
+      // сперва живая проверка токена: если он мёртв, список аккаунтов всё равно
+      // вернётся пустым и скроет настоящую причину
+      const chk = await meta.tokenCheck();
+      if (!chk.ok) return { configured: true, token: chk, error: chk.error };
+      try { return { configured: true, token: chk, ...(await meta.listAvailableAccounts()) }; }
+      catch (e: any) { return { configured: true, token: chk, error: String(e.message || e) }; }
     }
     case "meta_bind": {
       if (role !== "admin") return { error: "нет доступа" };

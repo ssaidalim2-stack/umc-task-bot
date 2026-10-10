@@ -12,8 +12,34 @@ async function gget(path: string, params: Record<string, string> = {}): Promise<
   const qs = new URLSearchParams({ ...params, access_token: TOKEN }).toString();
   const res = await fetch(`${GRAPH}${path}?${qs}`);
   const j: any = await res.json().catch(() => ({}));
-  if (j.error) throw new Error(`Meta API: ${j.error.message || JSON.stringify(j.error)}`);
+  if (j.error) {
+    // код и subcode важнее текста: по ним понятно, протух токен, нет прав или
+    // заблокировано само приложение — без них диагноз не поставить
+    const e = j.error;
+    const bits = [e.message || "ошибка"];
+    if (e.code) bits.push(`code ${e.code}${e.error_subcode ? "/" + e.error_subcode : ""}`);
+    if (e.type) bits.push(e.type);
+    throw new Error(`Meta API: ${bits.join(" · ")}`);
+  }
   return j;
+}
+
+// Живая проверка токена: кто мы и что видим. Возвращает человекочитаемый диагноз,
+// а не пустые списки — именно из-за молчаливых пустых списков протухший токен
+// полтора месяца выглядел как «аккаунтов нет».
+export async function tokenCheck(): Promise<{ ok: boolean; who?: string; scopes?: string[]; error?: string }> {
+  if (!TOKEN) return { ok: false, error: "META_TOKEN не задан в переменных окружения" };
+  try {
+    const me = await gget("/me", { fields: "id,name" });
+    let scopes: string[] = [];
+    try {
+      const d = await gget("/debug_token", { input_token: TOKEN });
+      scopes = d?.data?.scopes || [];
+    } catch { /* не критично */ }
+    return { ok: true, who: me.name || me.id, scopes };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 export function metaConfigured(): boolean { return !!TOKEN; }
