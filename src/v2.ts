@@ -189,13 +189,13 @@ export function registerV2(bot: Bot) {
       // группа заказчика: чистим прочие привязки этого чата, чтобы внутреннее сюда не утекало
       await d2.clearChatBindings(ctx.chat.id);
       await d2.addBinding(ctx.chat.id, projId, "client");
-      return ctx.reply(`✅ Группа клиента привязана: ${projName}.\n\nСюда будет приходить ТОЛЬКО отчёт о работе, который менеджер отправляет вручную. Ни ТЗ, ни сценарии, ни файлы, ни внутренние уведомления сюда не попадут.`);
+      return ctx.reply(`✅ Группа привязана: ${projName}`);
     }
     if (isClientChat) {
-      return ctx.reply("⛔ Это группа КЛИЕНТА. Внутренние разделы сюда привязывать нельзя — в них уходят ТЗ, сценарии и рабочие файлы.\n\nЕсли это ошибка и группа внутренняя, сначала отвяжи её: /unbind");
+      return ctx.reply("⛔ Это группа клиента. Чтобы сделать её внутренней: /unbind");
     }
     await d2.addBinding(ctx.chat.id, projId, spec);
-    await ctx.reply(`✅ Группа привязана: ${projName} (раздел: ${spec}). Сюда будут приходить ТЗ и уведомления по этому разделу.`);
+    await ctx.reply(`✅ Группа привязана: ${projName}`);
   });
 
   bot.command("unbind", async (ctx) => {
@@ -203,7 +203,7 @@ export function registerV2(bot: Bot) {
     const m = await db.getMember(ctx.from!.id);
     if (!isAdmin(m, ctx.from!.id)) return ctx.reply("⛔ Только админ может отвязать группу.");
     const n = await d2.clearChatBindings(ctx.chat.id);
-    await ctx.reply(n ? `✅ Привязки этой группы сняты (${n}). Бот больше ничего сюда не присылает.` : "Эта группа и так ни к чему не привязана.");
+    await ctx.reply(n ? "✅ Группа отвязана" : "Эта группа ни к чему не привязана");
   });
 
   // личная группа конкретного человека (например, персональный чат с монтажёром) —
