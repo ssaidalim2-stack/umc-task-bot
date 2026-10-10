@@ -6,19 +6,49 @@
 <title>UMC Task</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
+  /* Цвета берём у Telegram, но КАЖДЫЙ имеет собственный запасной вариант под текущую тему.
+     Telegram Desktop (особенно Windows) подставляет --tg-theme-* не полностью: если придёт
+     тёмный фон, а переменная текста не придёт, текст упадёт на светлый дефолт — отсюда
+     «чёрное на чёрном» и «белое на белом». Поэтому тема дублируется через data-theme,
+     который выставляется из tg.colorScheme — он есть всегда. */
   :root{
-    --bg: var(--tg-theme-bg-color, #fff);
-    --text: var(--tg-theme-text-color, #111);
-    --hint: var(--tg-theme-hint-color, #888);
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #8b8b8b);
     --card: var(--tg-theme-secondary-bg-color, #f3f4f6);
     --btn: var(--tg-theme-button-color, #2ea6ff);
-    --btn-text: var(--tg-theme-button-text-color, #fff);
+    --btn-text: var(--tg-theme-button-text-color, #ffffff);
     --accent:#22c55e;
     --accent2:#8b5cf6;
     --shadow: 0 2px 10px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
     --line: rgba(127,127,127,.16);
   }
-  @media (prefers-color-scheme: dark){ :root{ --shadow: 0 2px 14px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3); --line: rgba(255,255,255,.09); } }
+  :root[data-theme="dark"]{
+    --bg: var(--tg-theme-bg-color, #17212b);
+    --text: var(--tg-theme-text-color, #f1f1f1);
+    --hint: var(--tg-theme-hint-color, #9aa4ad);
+    --card: var(--tg-theme-secondary-bg-color, #232e3c);
+    --btn: var(--tg-theme-button-color, #2ea6ff);
+    --btn-text: var(--tg-theme-button-text-color, #ffffff);
+    --shadow: 0 2px 14px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3);
+    --line: rgba(255,255,255,.12);
+  }
+  :root[data-theme="light"]{
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --card: var(--tg-theme-secondary-bg-color, #f3f4f6);
+  }
+  /* системная тема — когда Telegram не сказал ничего */
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg: var(--tg-theme-bg-color, #17212b);
+      --text: var(--tg-theme-text-color, #f1f1f1);
+      --hint: var(--tg-theme-hint-color, #9aa4ad);
+      --card: var(--tg-theme-secondary-bg-color, #232e3c);
+      --shadow: 0 2px 14px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3);
+      --line: rgba(255,255,255,.12);
+    }
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:74px;font-size:15px;-webkit-font-smoothing:antialiased}
   header{padding:16px 16px 8px}
@@ -107,9 +137,16 @@
   /* на iPad/десктопе (широкий вьюпорт) центрируем контент разумной ширины вместо растягивания на весь экран.
      Блок стоит В КОНЦЕ таблицы стилей намеренно — иначе более поздние базовые правила (например .tabbar{left:0;right:0}) перебивают центрирование по порядку каскада. */
   @media (min-width:720px){
-    header,.wrap{max-width:640px;margin-left:auto;margin-right:auto}
-    .tabbar{width:640px;margin:0 auto;border-radius:14px 14px 0 0}
-    .msheet{width:640px;margin:0 auto}
+    header,.wrap{max-width:1100px;margin-left:auto;margin-right:auto;padding-left:18px;padding-right:18px}
+    .tabbar{left:0;right:0;width:100%;margin:0;border-radius:0;justify-content:center;gap:28px}
+    .tabbar button{max-width:150px}
+    .msheet{max-width:720px;margin:0 auto}
+    /* на широком экране карточки идут в две колонки — иначе это та же телефонная лента,
+       только с огромными полями по бокам */
+    .wrap{column-gap:16px}
+  }
+  @media (min-width:1500px){
+    header,.wrap{max-width:1360px}
   }
 </style>
 </head>
@@ -123,6 +160,16 @@
 
 <script>
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
+// tg.colorScheme приходит всегда, в отличие от набора --tg-theme-*; по нему и ставим тему
+function applyTheme(){
+  try{
+    const sc=tg.colorScheme==='dark'?'dark':tg.colorScheme==='light'?'light':'';
+    if(sc) document.documentElement.setAttribute('data-theme',sc);
+    else document.documentElement.removeAttribute('data-theme');
+  }catch(e){}
+}
+applyTheme();
+try{ tg.onEvent('themeChanged', applyTheme); }catch(e){}
 // на iPad/десктопе Mini App иначе открывается крошечным модальным окном — просим настоящий полный экран
 try{ if(tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
@@ -213,8 +260,9 @@ async function undoLast(){
   haptic();
 }
 let ASSIGN_I=0;
-const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["photo","📷 Фото"]];
-const TYPE_ICON={video:"🎬",graphic:"🖼",photo:"📷"};
+const DAILY_ROLE_OPTS=[["manager","Менеджеры"],["pm","Проджект-менеджеры"],["videographer","Видеографы"],["editor","Монтажёры"],["designer","Дизайнеры"],["sales","Отдел продаж"]];
+const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["story","📱 Сторис"],["photo","📷 Фото"]];
+const TYPE_ICON={video:"🎬",graphic:"🖼",story:"📱",photo:"📷"};
 function STATUS_OPTS(type){ return type==='video'
   ? [["idea","🕒 В плане"],["script","📝 Сценарий готов"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]]
   : [["todo","🕒 В работе"],["done","✅ Готово"]]; }
@@ -467,6 +515,7 @@ function renderTable(){
   const addBtns = (canEdit() && TBL_PLAN) ? `<div class="row" style="gap:6px;margin-top:12px;flex-wrap:wrap">
     <button class="btn sm" data-tadd="video">＋ Видео</button>
     <button class="btn sm sec" data-tadd="graphic">＋ Граф-пост</button>
+    <button class="btn sm sec" data-tadd="story">＋ Сторис</button>
     <button class="btn sm sec" data-tadd="photo">＋ Фото</button></div>`:'';
 
   return `<div class="pills">${projPills}</div><div class="pills">${periodPills}</div>${periodMgr}${newP}
@@ -630,7 +679,18 @@ function renderHome(){
     if(!d.items.length) h+='<div class="muted">Пока нет ежедневных задач.</div>';
     h+=d.items.map(it=>`<div class="vid"><span data-daily="${it.id}" style="cursor:pointer;flex:1;min-width:0">${it.done?'✅':'⬜'} ${esc(it.title)}${(it.who&&it.who!=='все')?` <span class="muted">(${esc(it.who)})</span>`:''}</span>${d.canEdit?`<button class="btn sm sec" data-daily-del="${it.id}">🗑</button>`:''}</div>`).join('');
     if(d.canEdit){
-      h+=`<div style="margin-top:8px"><input id="dailyNew" placeholder="Новая ежедневная задача…"><div class="row" style="gap:8px;margin-top:6px"><input id="dailyWho" placeholder="кому (пусто = всем)" style="flex:1"><button class="btn sm" data-daily-add>＋ Добавить</button></div></div>`;
+      // выбор из списка, а не ввод имени руками: имена не угадываются, и можно адресовать роли целиком
+      const people=(DATA.assignable||[]).map(p=>`<option value="id:${p.id}">${esc(p.name)}</option>`).join('');
+      const roles=DAILY_ROLE_OPTS.map(([k,l])=>`<option value="role:${k}">${l} — все</option>`).join('');
+      h+=`<div style="margin-top:8px"><input id="dailyNew" placeholder="Новая ежедневная задача…">
+        <div class="row" style="gap:8px;margin-top:6px">
+          <select id="dailyWho" class="rsel" style="flex:1;min-width:0">
+            <option value="">Всем</option>
+            <optgroup label="По роли">${roles}</optgroup>
+            ${people?`<optgroup label="Конкретному человеку">${people}</optgroup>`:''}
+          </select>
+          <button class="btn sm" data-daily-add style="flex:0 0 auto">＋ Добавить</button>
+        </div></div>`;
     }
     h+=`<div class="muted" style="margin-top:8px">Выполнено всего: <b>${d.allTime}</b></div></div>`;
   }
@@ -1288,6 +1348,10 @@ function renderWeek(){
   const days=[...Array(7)].map((_,i)=>wkShift(WK_START,i));
   const dLabel=iso=>{const[,m,d]=iso.split('-');return d+'.'+m;};
   const range=dLabel(days[0])+' – '+dLabel(days[6]);
+  // без подписи непонятно, какая неделя открыта, и что стрелки вообще листают недели
+  const thisMon=wkKey(mondayOf(tashkentNow()));
+  const diffW=Math.round((new Date(WK_START+'T00:00:00Z')-new Date(thisMon+'T00:00:00Z'))/604800000);
+  const weekLabel=diffW===0?'эта неделя':diffW===1?'следующая':diffW===-1?'прошлая':(diffW>0?`через ${diffW} нед.`:`${-diffW} нед. назад`);
   if(WK_TASKS===null) return `<div class="card"><h3>🗓 Недельный план</h3><div class="muted">Загрузка…</div></div>`;
 
   const nowKey=wkKey(tashkentNow());
@@ -1324,7 +1388,10 @@ function renderWeek(){
   }).join('');
 
   return `<div class="card">
-    <div class="row"><button class="btn sm sec" data-wkprev>◀</button><h3 style="text-align:center;flex:1;min-width:0">🗓 ${range}</h3><button class="btn sm sec" data-wknext>▶</button></div>
+    <div class="row"><button class="btn sm sec" data-wkprev title="Предыдущая неделя">◀</button>
+      <div style="flex:1;min-width:0;text-align:center"><h3 style="margin:0">🗓 ${range}</h3><div class="muted" style="font-size:12px">${weekLabel}</div></div>
+      <button class="btn sm sec" data-wknext title="Следующая неделя">▶</button></div>
+    ${diffW===0?'<div class="muted" style="font-size:12px;margin-top:4px">▶ — спланировать следующую неделю заранее</div>':''}
     ${empPills}
     ${WK_PLANNER?'':'<div class="muted" style="font-size:12px">Твои задачи на эту неделю.</div>'}
   </div>${rows}`;

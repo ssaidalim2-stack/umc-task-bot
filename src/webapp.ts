@@ -158,6 +158,33 @@ function umcDbError(e: any): string {
   }
   return "Не удалось сохранить: " + msg;
 }
+// Кому адресована ежедневная задача. Формат хранения однозначный:
+//   ""/"все" — всем, "role:<ключ>" — всем с такой ролью, "id:<telegram_id>" — конкретному.
+// Старый формат (просто имя текстом) поддерживается, чтобы уже заведённые задачи не отвалились.
+function dailyMatches(raw: string, member: db.Member | null, userId: number, isAdmin: boolean, members: db.Member[]): boolean {
+  const who = (raw || "").trim().toLowerCase();
+  if (!who || who === "все" || who === "all") return true;
+  if (who.startsWith("role:")) {
+    const r = who.slice(5);
+    return r === "admin" ? isAdmin : db.memberRoleList(member).includes(r);
+  }
+  if (who.startsWith("id:")) return +who.slice(3) === userId;
+  return d2.resolveMemberSync(members, raw)?.telegram_id === userId;
+}
+function dailyWhoLabel(raw: string, members: db.Member[]): string {
+  const who = (raw || "").trim();
+  if (!who || /^(все|all)$/i.test(who)) return "все";
+  if (who.toLowerCase().startsWith("role:")) {
+    const r = who.slice(5).toLowerCase();
+    return ROLE_LABEL_RU[r] ? ROLE_LABEL_RU[r] + " (все)" : r;
+  }
+  if (who.toLowerCase().startsWith("id:")) {
+    const id = +who.slice(3);
+    const m = members.find((x) => x.telegram_id === id);
+    return m?.name || m?.username || String(id);
+  }
+  return who;
+}
 async function serializeUmc() {
   const rows = await d2.listUmcLeads();
   return rows.map((l) => ({
@@ -322,11 +349,8 @@ export async function getData(userId: number) {
 
   // ежедневник: задачи для этого пользователя + отметки за сегодня
   const doneSet = new Set(dailyDone);
-  const myDaily = dailyTpl.filter((t) => {
-    const who = (t.assignee_name || "").trim().toLowerCase();
-    if (!who || who === "все" || who === "all") return true;
-    return d2.resolveMemberSync(members, t.assignee_name!)?.telegram_id === userId;
-  }).map((t) => ({ id: t.id, title: t.title, who: t.assignee_name || "все", done: doneSet.has(t.id) }));
+  const myDaily = dailyTpl.filter((t) => dailyMatches(t.assignee_name || "", member, userId, isAdmin, members))
+    .map((t) => ({ id: t.id, title: t.title, who: dailyWhoLabel(t.assignee_name || "", members), done: doneSet.has(t.id) }));
   const daily = { items: myDaily, todayDone: myDaily.filter((x) => x.done).length, total: myDaily.length, allTime: dailyTotal, canEdit: isAdmin };
 
   let pub = 0, vt = 0, gd = 0, gt = 0;
