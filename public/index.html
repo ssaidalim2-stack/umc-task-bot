@@ -950,7 +950,7 @@ async function silentRefresh(){
   if(document.hidden || ACT_BUSY) return;
   const el=document.activeElement;
   if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
-  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null) return;
   try{
     const res=await api('GET');
     DATA=res;
@@ -1527,9 +1527,53 @@ function anCmp(){
   h+=`<div class="card"><img src="https://quickchart.io/chart?w=560&h=300&c=${encodeURIComponent(JSON.stringify(chart))}" style="width:100%;border-radius:10px"></div>`;
   return h;
 }
+let SUB_OPEN=null, SUB_EDIT=null;
+function daysLeft(iso){ return Math.round((new Date(iso+'T00:00:00Z')-new Date(wkKey(tashkentNow())+'T00:00:00Z'))/86400000); }
+function captureSub(){
+  if(!SUB_EDIT) return;
+  SUB_EDIT.app=val('sb_app'); SUB_EDIT.period_days=val('sb_days');
+  SUB_EDIT.purchased_on=val('sb_bought'); SUB_EDIT.expires_on=val('sb_exp');
+}
 function renderSubs(){
-  if(!DATA.subscriptions.length) return '<div class="card"><h3>💳 Подписки</h3><div class="muted">Пока нет. Добавь в боте: /addsub CapCut 2026-06-01 30</div></div>';
-  return `<div class="card"><h3>💳 Подписки</h3>`+DATA.subscriptions.map(s=>`<div class="vid"><span>${esc(s.app)}</span><span class="muted">до ${s.expires_on}</span></div>`).join('')+`</div>`;
+  const admin=DATA.user.role==='admin';
+  if(SUB_OPEN!=null&&admin) return renderSubCard();
+  const list=DATA.subscriptions||[];
+  const rows=list.map(s=>{
+    const d=daysLeft(s.expires_on);
+    const mark=d<0?'<span class="badge" style="background:#e5484d;color:#fff">просрочена</span>'
+      :d<=3?`<span class="badge" style="background:#f5a524;color:#fff">${d} дн.</span>`
+      :`<span class="muted">${d} дн.</span>`;
+    return `<div class="vid" ${admin?`data-subopen="${s.id}" style="cursor:pointer"`:''}>
+      <div style="min-width:0;flex:1"><div><b>${esc(s.app)}</b></div>
+        <div class="muted" style="font-size:12px">до ${s.expires_on}${s.period_days?` · период ${s.period_days} дн.`:''}</div></div>
+      <div style="display:flex;gap:6px;align-items:center;flex:0 0 auto">${mark}
+        ${admin?`<button class="xbtn" data-subrenew="${s.id}" title="Продлить на период">↻</button>`:''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card">
+    <div class="row"><h3>💳 Подписки</h3>${admin?'<button class="btn sm" data-subnew>＋ Добавить</button>':''}</div>
+    ${list.length?rows:'<div class="muted">Пока ничего не добавлено.</div>'}
+    ${admin?'<div class="muted" style="font-size:11px;margin-top:8px">↻ продлевает на период от даты окончания. Нажми на подписку, чтобы изменить.</div>':''}
+  </div>`;
+}
+function renderSubCard(){
+  const isNew=SUB_OPEN==='new';
+  if(!SUB_EDIT){
+    const f=isNew?null:(DATA.subscriptions||[]).find(x=>x.id==SUB_OPEN);
+    const today=wkKey(tashkentNow());
+    SUB_EDIT=f?{...f}:{app:'',period_days:30,purchased_on:today,expires_on:''};
+  }
+  const e=SUB_EDIT;
+  return `<div class="card">
+    <div class="row"><h3>${isNew?'Новая подписка':esc(e.app||'Подписка')}</h3><button class="btn sm sec" data-subclose>← назад</button></div>
+    <div class="muted">Название:</div><input id="sb_app" value="${esc(e.app)}" placeholder="напр. CapCut Pro">
+    <div class="muted">Период (дней):</div><input id="sb_days" value="${esc(String(e.period_days||30))}" inputmode="numeric" style="max-width:140px">
+    <div class="muted" style="margin-top:6px">Дата оплаты:</div><input type="date" id="sb_bought" value="${esc(e.purchased_on||'')}">
+    <div class="muted" style="margin-top:6px">Действует до:</div><input type="date" id="sb_exp" value="${esc(e.expires_on||'')}">
+    <div class="muted" style="font-size:11px;margin-top:4px">Если оставить пустым при создании — посчитается от даты оплаты и периода.</div>
+    <button class="btn full" data-subsave style="margin-top:10px">💾 Сохранить</button>
+    ${!isNew?'<button class="btn sm sec full" data-subdel style="margin-top:6px">🗑 Удалить</button>':''}
+  </div>`;
 }
 
 function renderWork(){
@@ -2152,6 +2196,35 @@ function bind(){
     };
     if(tg.showConfirm) tg.showConfirm('Отправить отчёт в группу клиента?',(ok)=>{if(ok)run();}); else run();
   });
+  document.querySelectorAll('[data-subopen]').forEach(b=>b.onclick=()=>{SUB_OPEN=+b.dataset.subopen;SUB_EDIT=null;render();});
+  const sbn=document.querySelector('[data-subnew]'); if(sbn) sbn.onclick=()=>{SUB_OPEN='new';SUB_EDIT=null;render();};
+  const sbc=document.querySelector('[data-subclose]'); if(sbc) sbc.onclick=()=>{SUB_OPEN=null;SUB_EDIT=null;render();};
+  const sbs=document.querySelector('[data-subsave]'); if(sbs) sbs.onclick=()=>busyClick(sbs, async()=>{
+    captureSub();
+    if(!SUB_EDIT.app.trim()){tg.showAlert&&tg.showAlert('Впиши название подписки');return;}
+    const isNew=SUB_OPEN==='new';
+    const fields={app:SUB_EDIT.app,period_days:SUB_EDIT.period_days,purchased_on:SUB_EDIT.purchased_on,expires_on:SUB_EDIT.expires_on};
+    const res=await api('POST',isNew?{type:'sub_add',fields}:{type:'sub_update',id:SUB_EDIT.id,fields});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    if(res&&res.projects){DATA=res;buildTabs();}
+    SUB_OPEN=null;SUB_EDIT=null;render();
+    tg.showAlert&&tg.showAlert('Сохранено ✅');
+  });
+  document.querySelectorAll('[data-subrenew]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const res=await api('POST',{type:'sub_renew',id:+b.dataset.subrenew});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    if(res&&res.projects){DATA=res;buildTabs();}
+    render(); tg.showAlert&&tg.showAlert('Продлено ✅');
+  }));
+  const sbd=document.querySelector('[data-subdel]'); if(sbd) sbd.onclick=()=>{
+    const run=()=>busyClick(sbd, async()=>{
+      const res=await api('POST',{type:'sub_delete',id:SUB_EDIT.id});
+      if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+      if(res&&res.projects){DATA=res;buildTabs();}
+      SUB_OPEN=null;SUB_EDIT=null;render();
+    });
+    if(tg.showConfirm) tg.showConfirm('Убрать подписку из списка?',(ok)=>{if(ok)run();}); else run();
+  };
   document.querySelectorAll('[data-stproj]').forEach(b=>b.onclick=()=>{ST_PROJ=+b.dataset.stproj;ST_LIST=null;ST_OPEN=null;render();});
   document.querySelectorAll('[data-stprev]').forEach(b=>b.onclick=()=>{ST_WEEK=wkShift(ST_WEEK,-7);render();});
   document.querySelectorAll('[data-stnext]').forEach(b=>b.onclick=()=>{ST_WEEK=wkShift(ST_WEEK,7);render();});

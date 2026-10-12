@@ -447,7 +447,7 @@ export async function getData(userId: number) {
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads, umcLeads,
     ...calendarExtra,
-    subscriptions: subs.map((s) => ({ app: s.app, expires_on: s.expires_on })),
+    subscriptions: subs.map((s) => ({ id: s.id, app: s.app, expires_on: s.expires_on, purchased_on: s.purchased_on, period_days: s.period_days })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
 }
@@ -903,6 +903,58 @@ export async function doAction(userId: number, action: any) {
       if (ex) { try { await bot.api.sendMessage(ex.telegram_id, `📌 Задача на ${day.split("-").reverse().join(".")}: ${title}`); } catch {} }
       return { ok: true };
     }
+    // ---- подписки: раньше их можно было только посмотреть, добавить — командой /addsub,
+    // а отредактировать или удалить вообще никак ----
+    case "sub_add": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const f = action.fields || {};
+      const app = String(f.app || "").trim();
+      if (!app) return { error: "укажи название подписки" };
+      const days = Math.max(1, parseInt(f.period_days, 10) || 30);
+      const bought = /^\d{4}-\d{2}-\d{2}$/.test(f.purchased_on || "") ? f.purchased_on
+        : new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+      const exp = /^\d{4}-\d{2}-\d{2}$/.test(f.expires_on || "") ? f.expires_on
+        : new Date(new Date(bought).getTime() + days * 86400000).toISOString().slice(0, 10);
+      try { await d2.createSubscription({ app, owner_id: userId, purchased_on: bought, period_days: days, expires_on: exp }); }
+      catch (e: any) { return { error: "не удалось сохранить: " + String(e?.message || e) }; }
+      return getData(userId);
+    }
+    case "sub_update": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const f = action.fields || {};
+      const patch: any = {};
+      if (f.app !== undefined) { const a = String(f.app).trim(); if (!a) return { error: "название не может быть пустым" }; patch.app = a; }
+      if (f.period_days !== undefined) patch.period_days = Math.max(1, parseInt(f.period_days, 10) || 30);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(f.purchased_on || "")) patch.purchased_on = f.purchased_on;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(f.expires_on || "")) {
+        patch.expires_on = f.expires_on;
+        // срок сдвинули вперёд — прошлые напоминания больше не актуальны
+        patch.reminded_before = false; patch.reminded_after = false;
+      }
+      try { await d2.updateSubscription(+action.id, patch); }
+      catch (e: any) { return { error: "не удалось сохранить: " + String(e?.message || e) }; }
+      return getData(userId);
+    }
+    case "sub_renew": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const sub = await d2.getSubscription(+action.id);
+      if (!sub) return { error: "подписка не найдена" };
+      const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+      // продлеваем от даты окончания, но не раньше сегодня — иначе продление
+      // просроченной подписки сразу уйдёт в прошлое
+      const base = sub.expires_on > today ? sub.expires_on : today;
+      const next = new Date(new Date(base).getTime() + (sub.period_days || 30) * 86400000).toISOString().slice(0, 10);
+      try { await d2.updateSubscription(sub.id, { expires_on: next, purchased_on: today, reminded_before: false, reminded_after: false }); }
+      catch (e: any) { return { error: "не удалось продлить: " + String(e?.message || e) }; }
+      return getData(userId);
+    }
+    case "sub_delete": {
+      if (role !== "admin") return { error: "нет доступа" };
+      try { await d2.archiveSubscription(+action.id); }
+      catch (e: any) { return { error: "не удалось удалить: " + String(e?.message || e) }; }
+      return getData(userId);
+    }
+
     // ---- сторис: недельный план, живёт в content_items с type='story' ----
     // отдельной таблицы нет намеренно: та же сущность, только свой раздел и свои поля,
     // поэтому в «Таблице» контент-плана сторис отфильтрованы и в его статистику не идут

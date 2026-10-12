@@ -335,6 +335,23 @@ export async function listSubscriptions(): Promise<Subscription[]> {
 export async function markSub(id: number, field: "reminded_before" | "reminded_after"): Promise<void> {
   await supabase.from("subscriptions").update({ [field]: true }).eq("id", id);
 }
+export async function createSubscription(input: { app: string; owner_id: number; purchased_on: string; period_days: number; expires_on: string }): Promise<void> {
+  const { error } = await supabase.from("subscriptions").insert({ ...input, active: true });
+  if (error) throw new Error(error.message);
+}
+export async function updateSubscription(id: number, patch: Partial<Subscription>): Promise<void> {
+  const { error } = await supabase.from("subscriptions").update(patch).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+// снимаем с учёта, а не стираем: история оплат может ещё понадобиться
+export async function archiveSubscription(id: number): Promise<void> {
+  const { error } = await supabase.from("subscriptions").update({ active: false }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function getSubscription(id: number): Promise<Subscription | null> {
+  const { data } = await supabase.from("subscriptions").select("*").eq("id", id).maybeSingle();
+  return (data as Subscription) ?? null;
+}
 
 // ---------- group bindings ----------
 export async function addBinding(chatId: number, projectId: number | null, specialty: string): Promise<void> {
