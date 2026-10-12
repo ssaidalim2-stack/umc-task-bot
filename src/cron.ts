@@ -38,10 +38,9 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   sent += await deadlineReminders(now);
   sent += await subscriptionReminders(day);
 
-  // 3×/день дайджесты задач (08:00, 14:00, 20:00)
-  if ([8, 14, 20].includes(hour)) {
-    if (await d2.claimMarker(`digest_${hour}`, day)) sent += await sendDigests();
-  }
+  // дайджест задач 2×/день: утром — что сегодня, вечером — что осталось
+  if (hour === 8 && (await d2.claimMarker("digest_8", day))) sent += await sendDigests("morning");
+  if (hour === 20 && (await d2.claimMarker("digest_20", day))) sent += await sendDigests("evening");
 
   // сторис на сегодня — утром, с прикреплённым материалом
   if (hour === 9 && (await d2.claimMarker("stories_today", day))) sent += await storyReminders(day);
@@ -52,7 +51,7 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
 
   // отчёты в 08:00 утра
   if (hour === 8) {
-    if (await d2.claimMarker("report_daily", day)) sent += await sendReport("Ежедневный отчёт");
+    // ежедневный отчёт отключён: дублировал утреннюю сводку команды в 10:00
     if (dow === 1 && (await d2.claimMarker("report_weekly", day))) sent += await sendReport("Еженедельный отчёт");
     if (dom === 1 && (await d2.claimMarker("report_monthly", day))) sent += await sendReport("Ежемесячный отчёт");
     sent += await shootReminders(day);
@@ -86,11 +85,8 @@ async function deadlineReminders(now: number): Promise<number> {
       for (const a of await db.listAdmins())
         await safeSend(a.telegram_id, t(langOf(a), "remind_overdue_admin", { id: task.id, title: task.title, assignee: assignee?.name || String(task.assignee_id) }));
       await db.markReminded(task.id, "reminded_overdue"); sent++;
-    } else if (diff > 0 && diff <= HOUR && !task.reminded_1h) {
-      const msg = t(lang, "remind_1h", { id: task.id, title: task.title });
-      await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
-      await db.markReminded(task.id, "reminded_1h"); sent++;
-    } else if (diff > HOUR && diff <= 24 * HOUR && !task.reminded_24h) {
+    } else if (diff > 0 && diff <= 24 * HOUR && !task.reminded_24h) {
+      // ступень «за 1 час» убрана: раздражала больше, чем помогала
       const msg = t(lang, "remind_24h", { id: task.id, title: task.title });
       await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
       await db.markReminded(task.id, "reminded_24h"); sent++;
@@ -119,24 +115,21 @@ async function subscriptionReminders(today: string): Promise<number> {
   return sent;
 }
 
-// ---------- дайджесты 3×/день ----------
-async function sendDigests(): Promise<number> {
+// ---------- дайджесты задач (утро / вечер) ----------
+async function sendDigests(part: "morning" | "evening"): Promise<number> {
   const members = await db.listMembers();
   let sent = 0;
   for (const m of members) {
     const tasks = await d2.tasksForMember(m);
     const open = tasks.filter((x) => x.status === "new" || x.status === "in_progress");
-    if (open.length > 0) {
-      const lines = [`☀️ Доброе утро, ${m.name}! Твои задачи на сегодня:`, ""];
-      open.forEach((tk) => lines.push(`• ${tk.title}`));
-      lines.push("", "Открой /menu → ✅ Мои задачи, чтобы отметить выполнение.");
-      await safeSend(m.telegram_id, lines.join("\n")); sent++;
-    }
-  }
-  // если задач в системе не осталось — поздравить админов
-  const allOpen = (await d2.listOpenTasks()).filter((t) => t.status === "new" || t.status === "in_progress");
-  if (allOpen.length === 0) {
-    for (const a of await db.listAdmins()) { await safeSend(a.telegram_id, "🎉 Все задачи выполнены! Отличная работа команды."); sent++; }
+    if (!open.length) continue;   // нечего сказать — молчим, а не пишем «задач нет»
+    const head = part === "morning"
+      ? `☀️ Доброе утро, ${m.name}! Задачи на сегодня:`
+      : `🌙 ${m.name}, на сегодня осталось незакрытым:`;
+    const lines = [head, ""];
+    open.forEach((tk) => lines.push(`• ${tk.title}`));
+    lines.push("", "Отметить выполнение: /menu → ✅ Мои задачи");
+    await safeSend(m.telegram_id, lines.join("\n")); sent++;
   }
   return sent;
 }
