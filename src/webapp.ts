@@ -185,14 +185,16 @@ function dailyWhoLabel(raw: string, members: db.Member[]): string {
   }
   return who;
 }
+const STORY_FIELDS = ["day", "media", "lang", "theme", "shooter", "speech", "title", "subtitle", "material", "matDeadline"];
 async function serializeStories(projectId: number) {
   const plan = await d2.getActivePlan(projectId);
   if (!plan) return [];
   const items = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "story");
   return items.map((it) => {
     const d = parseItemData((it as any).title);
-    return { id: it.id, day: d.day || "", theme: d.theme || "", title: d.title || "",
-             material: d.material || "", format: (it as any).format || "", stage: it.stage || "planned" };
+    const out: any = { id: it.id, stage: it.stage || "planned", file: d.file || null };
+    for (const k of STORY_FIELDS) out[k] = d[k] || "";
+    return out;
   });
 }
 async function serializeUmc() {
@@ -918,7 +920,7 @@ export async function doAction(userId: number, action: any) {
       await d2.addContentItem({ plan_id: plan.id, project_id: pid, type: "story", idx: nextIdx });
       const fresh = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "story").sort((a, b) => b.id - a.id)[0];
       if (fresh) {
-        const d: any = { day: String(action.day || ""), theme: "", title: "", material: "" };
+        const d: any = { day: String(action.day || ""), media: "video", lang: "", theme: "", shooter: "", speech: "", title: "", subtitle: "", material: "", matDeadline: "" };
         await d2.updateItem(fresh.id, { title: JSON.stringify(d), stage: "planned", status: "in_progress" });
       }
       return { stories: await serializeStories(pid) };
@@ -929,12 +931,29 @@ export async function doAction(userId: number, action: any) {
       if (!it) return { error: "сторис не найдена" };
       const f = action.fields || {};
       const d = parseItemData((it as any).title);
-      for (const k of ["day", "theme", "title", "material"]) if (k in f) d[k] = f[k] || "";
+      for (const k of STORY_FIELDS) if (k in f) d[k] = f[k] || "";
       d.last_edited_by = member?.name || String(userId);
       const patch: any = { title: JSON.stringify(d) };
-      if (f.format !== undefined) patch.format = f.format || null;
       if (f.stage) { patch.stage = f.stage; patch.status = f.stage === "published" ? "done" : "in_progress"; }
       await d2.updateItem(+action.id, patch);
+      return { stories: await serializeStories(it.project_id) };
+    }
+    case "story_attach": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { error: "сторис не найдена" };
+      await db.setSession(userId, { awaitStoryFile: it.id } as any);
+      const proj = await d2.getProject(it.project_id);
+      try { await bot.api.sendMessage(userId, `📎 Пришли сюда файл для сторис${proj ? " — " + proj.name : ""}. Я сохраню его и напомню с ним в нужный день.`); } catch {}
+      return { ok: true };
+    }
+    case "story_detach": {
+      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      const it = await d2.getItem(+action.id);
+      if (!it) return { error: "сторис не найдена" };
+      const d = parseItemData((it as any).title);
+      delete d.file;
+      await d2.updateItem(it.id, { title: JSON.stringify(d) });
       return { stories: await serializeStories(it.project_id) };
     }
     case "story_delete": {

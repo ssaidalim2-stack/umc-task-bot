@@ -1916,12 +1916,23 @@ function renderUmcDetail(){
 }
 
 // ---- Сторис: недельный план по проекту ----
+const STORY_MEDIA=[["video","🎬 Видео"],["photo","📷 Фото"],["graphic","🖼 Граф-пост"]];
+function storyMediaLabel(k){ const o=STORY_MEDIA.find(x=>x[0]===k); return o?o[1]:'—'; }
 const STORY_STATUS=[["planned","🕒 Запланировано"],["ready","📦 Материал готов"],["published","✅ Опубликовано"]];
 function storyStatusLabel(k){ const o=STORY_STATUS.find(x=>x[0]===k); return o?o[1]:'🕒 Запланировано'; }
 let ST_PROJ=null, ST_WEEK=null, ST_LIST=null, ST_LOADED=null, ST_OPEN=null, ST_EDIT=null;
+function storyFields(){
+  const e=ST_EDIT;
+  return {day:e.day||'',media:e.media||'',lang:e.lang||'',theme:e.theme||'',shooter:e.shooter||'',
+          speech:e.speech||'',title:e.title||'',subtitle:e.subtitle||'',material:e.material||'',
+          matDeadline:e.matDeadline||'',stage:e.stage||'planned'};
+}
 function captureStory(){
   if(!ST_EDIT) return;
-  ST_EDIT.theme=val('sf_theme'); ST_EDIT.title=val('sf_title'); ST_EDIT.material=val('sf_material');
+  // поля условные: читаем только те, что сейчас на экране, иначе затрём сохранённое пустым
+  const g=(id,key)=>{ const el=document.getElementById(id); if(el) ST_EDIT[key]=el.value; };
+  g('sf_theme','theme'); g('sf_speech','speech'); g('sf_title','title');
+  g('sf_subtitle','subtitle'); g('sf_material','material'); g('sf_matdl','matDeadline');
 }
 async function stLoad(){
   ST_LOADED=ST_PROJ;
@@ -1952,8 +1963,8 @@ function renderStories(){
     const list=ST_LIST.filter(x=>x.day===iso);
     const cards=list.length?list.map(x=>`<div class="vid" data-stopen="${x.id}" style="cursor:pointer;align-items:flex-start">
         <div style="min-width:0;flex:1">
-          <div><b>${esc(x.title||x.theme||'без заголовка')}</b></div>
-          <div class="muted" style="font-size:12px">${x.theme&&x.title?esc(x.theme)+' · ':''}${x.format?formatLabel(x.format):'формат не задан'}${x.material?' · 📎 материал есть':''}</div>
+          <div><b>${esc(x.theme||x.title||'без темы')}</b></div>
+          <div class="muted" style="font-size:12px">${storyMediaLabel(x.media)}${x.lang?' · '+(LANG_SHORT[x.lang]||x.lang):''}${x.shooter?' · 🎥 '+esc(x.shooter):''}${x.file?' · 📎 файл':x.material?' · 📝 материал':''}</div>
         </div>
         <span class="badge" style="flex:0 0 auto">${storyStatusLabel(x.stage)}</span>
       </div>`).join(''):'<div class="muted" style="font-size:12px">—</div>';
@@ -1972,16 +1983,29 @@ function renderStories(){
   </div>${rows}`;
 }
 function renderStoryCard(){
-  if(!ST_EDIT){ const f=(ST_LIST||[]).find(x=>x.id==ST_OPEN); if(!f) { ST_OPEN=null; return renderStories(); } ST_EDIT={...f}; }
-  const e=ST_EDIT;
+  if(!ST_EDIT){ const f=(ST_LIST||[]).find(x=>x.id==ST_OPEN); if(!f){ ST_OPEN=null; return renderStories(); } ST_EDIT={...f}; }
+  const e=ST_EDIT, isVid=e.media==='video', isGfx=e.media==='graphic';
   const[,m,d]=(e.day||'--- --').split('-');
+  const shooters=(DATA.assignable||[]);
+  const fileBlock = e.file
+    ? `<div class="vid" style="margin-top:4px"><span style="min-width:0">📎 ${esc(e.file.name||'материал прикреплён')} <span class="muted">(${esc(e.file.kind||'')})</span></span><button class="xbtn" data-stdetach>✕ убрать</button></div>`
+    : `<button class="btn sm sec full" data-stattach style="margin-top:4px">📎 Прикрепить материал</button>
+       <div class="muted" style="font-size:11px;margin-top:4px">Бот попросит прислать файл ему в личку и напомнит с ним в день публикации.</div>`;
   return `<div class="card">
     <div class="row"><h3>📱 Сторис${e.day?` · ${d}.${m}`:''}</h3><button class="btn sm sec" data-stclose>← назад</button></div>
-    <div class="muted">Формат:</div><div class="pills">${FORMAT_OPTS.map(([k,l])=>`<div class="pill ${e.format===k?'active':''}" data-stfmt="${k}">${l}</div>`).join('')}</div>
+    <div class="muted">Формат:</div><div class="pills">${STORY_MEDIA.map(([k,l])=>`<div class="pill ${e.media===k?'active':''}" data-stmedia="${k}">${l}</div>`).join('')}</div>
+    <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${e.lang===k?'active':''}" data-stlang="${k}">${l}</div>`).join('')}</div>
     <div class="muted">Тема:</div><input id="sf_theme" value="${esc(e.theme)}" placeholder="о чём сторис">
-    <div class="muted">Заголовок (текст на экране):</div><input id="sf_title" value="${esc(e.title)}" placeholder="что увидит зритель">
-    <div class="muted">Готовый материал (по желанию):</div>
-    <textarea id="sf_material" style="min-height:90px" placeholder="Ссылка на файл, текст сторис, что снять — всё, что уже готово">${esc(e.material)}</textarea>
+    ${isVid?`<div class="muted">Кто снимает:</div><div class="pills">${
+        shooters.length?shooters.map(p=>`<div class="pill ${e.shooter===p.name?'active':''}" data-stshooter="${esc(p.name)}">${esc(p.name)}</div>`).join('')
+        :'<div class="muted" style="font-size:12px">Нет сотрудников в команде</div>'}</div>
+      <div class="muted">Речь / что делать в кадре:</div><textarea id="sf_speech" style="min-height:80px" placeholder="что говорить и что показывать">${esc(e.speech)}</textarea>`:''}
+    ${isGfx?`<div class="muted">Заголовок:</div><input id="sf_title" value="${esc(e.title)}" placeholder="крупный текст">
+      <div class="muted">Подзаголовок:</div><input id="sf_subtitle" value="${esc(e.subtitle)}" placeholder="строка помельче">`:''}
+    <div class="muted" style="margin-top:8px">Дедлайн на получение материала:</div>${pickerPair('sf_matdl',e.matDeadline,'ДД.ММ',false,'')}
+    <div class="muted" style="margin-top:8px">Материал:</div>
+    ${fileBlock}
+    <textarea id="sf_material" style="min-height:60px;margin-top:6px" placeholder="или ссылка / текст, если файла нет">${esc(e.material)}</textarea>
     <div class="muted" style="margin-top:6px">Статус:</div><div class="pills">${STORY_STATUS.map(([k,l])=>`<div class="pill ${e.stage===k?'active':''}" data-ststage="${k}">${l}</div>`).join('')}</div>
     <button class="btn full" data-stsave style="margin-top:10px">💾 Сохранить</button>
     <button class="btn sm sec full" data-stdel style="margin-top:6px">🗑 Удалить</button>
@@ -2064,9 +2088,18 @@ function renderMyWork(){
   }).join('');
 }
 
-function autoGrow(t){ t.style.height='auto'; t.style.height=(t.scrollHeight+2)+'px'; }
+// Замер до того, как раскладка устоялась, давал абсурдную высоту, и она «запекалась»
+// в inline-стиль навсегда. Поэтому: скрытые не трогаем, высоту ограничиваем сверху,
+// и после рендера перемеряем в следующем кадре, когда стили уже применены.
+function autoGrow(t){
+  if(t.offsetHeight===0 && !t.offsetParent) return;
+  t.style.height='auto';
+  t.style.height=Math.min(t.scrollHeight+2,600)+'px';
+}
+function autoGrowAll(){ document.querySelectorAll('textarea').forEach(autoGrow); }
 function bind(){
   document.querySelectorAll('textarea').forEach(t=>{ autoGrow(t); t.oninput=()=>autoGrow(t); });
+  requestAnimationFrame(autoGrowAll);
   // автосохранение карточки пункта: любое изменение поля ставит отложенное сохранение
   if(TAB==='plan'&&TBL_OPEN!=null){
     ['f_theme','f_reference','f_props','f_location','f_shoot','f_deadline','f_script']
@@ -2124,7 +2157,24 @@ function bind(){
   document.querySelectorAll('[data-stnext]').forEach(b=>b.onclick=()=>{ST_WEEK=wkShift(ST_WEEK,7);render();});
   document.querySelectorAll('[data-stopen]').forEach(b=>b.onclick=()=>{ST_OPEN=+b.dataset.stopen;ST_EDIT=null;render();});
   const stc=document.querySelector('[data-stclose]'); if(stc) stc.onclick=()=>{ST_OPEN=null;ST_EDIT=null;render();};
-  document.querySelectorAll('[data-stfmt]').forEach(b=>b.onclick=()=>{captureStory();ST_EDIT.format=(ST_EDIT.format===b.dataset.stfmt?'':b.dataset.stfmt);render();});
+  document.querySelectorAll('[data-stmedia]').forEach(b=>b.onclick=()=>{captureStory();ST_EDIT.media=b.dataset.stmedia;render();});
+  document.querySelectorAll('[data-stlang]').forEach(b=>b.onclick=()=>{captureStory();ST_EDIT.lang=(ST_EDIT.lang===b.dataset.stlang?'':b.dataset.stlang);render();});
+  document.querySelectorAll('[data-stshooter]').forEach(b=>b.onclick=()=>{captureStory();ST_EDIT.shooter=(ST_EDIT.shooter===b.dataset.stshooter?'':b.dataset.stshooter);render();});
+  const sta=document.querySelector('[data-stattach]'); if(sta) sta.onclick=()=>busyClick(sta, async()=>{
+    captureStory();
+    // сначала сохраняем, чтобы введённое не потерялось, пока менеджер уходит слать файл
+    await api('POST',{type:'story_update',id:ST_EDIT.id,fields:storyFields()});
+    const res=await api('POST',{type:'story_attach',id:ST_EDIT.id});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    tg.showAlert&&tg.showAlert('Открой чат с ботом и пришли файл — он сохранит его и напомнит в нужный день 📎');
+  });
+  const stdt=document.querySelector('[data-stdetach]'); if(stdt) stdt.onclick=()=>busyClick(stdt, async()=>{
+    const res=await api('POST',{type:'story_detach',id:ST_EDIT.id});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    ST_LIST=(res&&res.stories)||ST_LIST;
+    const f=ST_LIST.find(x=>x.id===ST_EDIT.id); if(f) ST_EDIT={...f};
+    render();
+  });
   document.querySelectorAll('[data-ststage]').forEach(b=>b.onclick=()=>{captureStory();ST_EDIT.stage=b.dataset.ststage;render();});
   document.querySelectorAll('[data-stadd]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
     const res=await api('POST',{type:'story_add',projectId:ST_PROJ,day:b.dataset.stadd});
@@ -2137,7 +2187,7 @@ function bind(){
   }));
   const sts=document.querySelector('[data-stsave]'); if(sts) sts.onclick=()=>busyClick(sts, async()=>{
     captureStory();
-    const res=await api('POST',{type:'story_update',id:ST_EDIT.id,fields:{day:ST_EDIT.day,theme:ST_EDIT.theme,title:ST_EDIT.title,material:ST_EDIT.material,format:ST_EDIT.format||'',stage:ST_EDIT.stage||'planned'}});
+    const res=await api('POST',{type:'story_update',id:ST_EDIT.id,fields:storyFields()});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
     ST_LIST=(res&&res.stories)||ST_LIST; ST_OPEN=null; ST_EDIT=null; render();
     tg.showAlert&&tg.showAlert('Сохранено ✅');

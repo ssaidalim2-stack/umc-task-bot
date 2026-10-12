@@ -43,6 +43,9 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
     if (await d2.claimMarker(`digest_${hour}`, day)) sent += await sendDigests();
   }
 
+  // сторис на сегодня — утром, с прикреплённым материалом
+  if (hour === 9 && (await d2.claimMarker("stories_today", day))) sent += await storyReminders(day);
+
   // сводки в группу команды: утром задачи на день, вечером итоги
   if (hour === 10 && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(await buildTeamMorning());
   if (hour === 23 && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(await buildTeamEvening());
@@ -136,6 +139,56 @@ async function sendDigests(): Promise<number> {
     for (const a of await db.listAdmins()) { await safeSend(a.telegram_id, "🎉 Все задачи выполнены! Отличная работа команды."); sent++; }
   }
   return sent;
+}
+
+// ---------- сторис на сегодня ----------
+// Менеджер заранее прикрепляет файл в разделе «Сторис»; в назначенный день бот
+// присылает ему этот же файл с подписью — что и по какому проекту выставлять.
+async function storyReminders(day: string): Promise<number> {
+  const [plans, items, projects] = await Promise.all([d2.getAllActivePlans(), d2.getAllItems(), d2.getProjects()]);
+  const activeIds = new Set(plans.map((p) => p.id));
+  const projById = new Map(projects.map((p) => [p.id, p]));
+  const recips = new Set<number>(ENV_ADMINS);
+  for (const a of await db.listAdmins()) recips.add(a.telegram_id);
+  for (const m of await d2.membersWithRole("manager")) recips.add(m.telegram_id);
+  for (const m of await d2.membersWithRole("pm")) recips.add(m.telegram_id);
+
+  let sent = 0;
+  for (const it of items) {
+    if (it.type !== "story" || !activeIds.has(it.plan_id)) continue;
+    if (it.stage === "published") continue;
+    const d = parseItemData((it as any).title);
+    if (d.day !== day) continue;
+    const proj = projById.get(it.project_id);
+    const bits = [`📱 Сторис сегодня — ${proj?.name || ""}`];
+    if (d.theme) bits.push(`Тема: ${d.theme}`);
+    if (d.title) bits.push(`Заголовок: ${d.title}`);
+    if (d.subtitle) bits.push(`Подзаголовок: ${d.subtitle}`);
+    if (d.speech) bits.push(`Речь/что делать: ${d.speech}`);
+    if (d.shooter) bits.push(`Снимает: ${d.shooter}`);
+    if (d.material) bits.push(`Материал: ${d.material}`);
+    bits.push(d.file ? "📎 Готовый файл ниже — можно выставлять." : "⚠️ Файл не прикреплён.");
+    const caption = bits.join("\n");
+    for (const cid of recips) {
+      try {
+        if (d.file?.id) await sendStoryFile(cid, d.file, caption);
+        else await bot.api.sendMessage(cid, caption);
+        sent++;
+      } catch {}
+    }
+  }
+  return sent;
+}
+async function sendStoryFile(chatId: number, file: { id: string; kind: string }, caption: string): Promise<void> {
+  const cap = caption.slice(0, 1024); // лимит подписи Telegram
+  switch (file.kind) {
+    case "photo": await bot.api.sendPhoto(chatId, file.id, { caption: cap }); break;
+    case "video": await bot.api.sendVideo(chatId, file.id, { caption: cap }); break;
+    case "audio": await bot.api.sendAudio(chatId, file.id, { caption: cap }); break;
+    case "voice": await bot.api.sendVoice(chatId, file.id, { caption: cap }); break;
+    case "video_note": await bot.api.sendVideoNote(chatId, file.id); await bot.api.sendMessage(chatId, caption); break;
+    default: await bot.api.sendDocument(chatId, file.id, { caption: cap });
+  }
 }
 
 // ---------- сводки в группу команды ----------

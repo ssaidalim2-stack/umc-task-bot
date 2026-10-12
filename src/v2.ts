@@ -225,9 +225,31 @@ export function registerV2(bot: Bot) {
   bot.on(["message:document", "message:video", "message:photo", "message:audio", "message:voice", "message:video_note"], async (ctx) => {
     if (ctx.chat.type !== "private") return;
     const s: any = await db.getSession(ctx.from!.id);
+
+    // файл для сторис: сохраняем file_id, чтобы бот мог переслать его в нужный день
+    const storyId = s && s.awaitStoryFile;
+    if (storyId) {
+      await db.clearSession(ctx.from!.id);
+      const item = await d2.getItem(storyId);
+      if (!item) { await ctx.reply("Сторис не найдена."); return; }
+      const msg: any = ctx.message;
+      const photo = msg.photo && msg.photo[msg.photo.length - 1];
+      const f = msg.document || msg.video || photo || msg.audio || msg.voice || msg.video_note;
+      if (!f?.file_id) { await ctx.reply("Не смог прочитать файл, пришли ещё раз."); return; }
+      const kind = msg.document ? "document" : msg.video ? "video" : photo ? "photo" : msg.audio ? "audio" : msg.voice ? "voice" : "video_note";
+      const data = JSON.parse(item.title || "{}");
+      data.file = { id: f.file_id, kind, name: msg.document?.file_name || msg.video?.file_name || "" };
+      if (data.stageAuto !== false && item.stage === "planned") await d2.updateItem(item.id, { title: JSON.stringify(data), stage: "ready" });
+      else await d2.updateItem(item.id, { title: JSON.stringify(data) });
+      const proj = await d2.getProject(item.project_id);
+      const when = data.day ? ` на ${String(data.day).split("-").reverse().join(".")}` : "";
+      await ctx.reply(`✅ Материал прикреплён к сторис${proj ? " — " + proj.name : ""}${when}. Напомню с ним в этот день.`);
+      return;
+    }
+
     const taskId = s && s.awaitFileTask;
     if (!taskId) {
-      await ctx.reply("Чтобы сдать файл: открой приложение → «Мои задачи» → 📎 Файл у нужной задачи, потом пришли файл сюда.");
+      await ctx.reply("Чтобы прислать файл: открой приложение → «Мои задачи» → 📎 Файл у задачи, либо «Сторис» → 📎 Прикрепить материал.");
       return;
     }
     const t = await d2.getTaskRow(taskId);
