@@ -1430,11 +1430,20 @@ function renderClientReport(){
   </div>`;
 }
 
+let META_TOK_OPEN=false;
+// поле для нового токена Meta (только админ): токен хранится в базе бота, Vercel трогать не нужно
+function metaTokenForm(){
+  return `<div style="margin-top:8px"><input id="metaTok" type="password" autocomplete="off" placeholder="Вставь токен Meta (EAA…)">
+    <button class="btn sm full" data-metatoken style="margin-top:6px">💾 Проверить и сохранить</button>
+    <div class="muted" style="font-size:11px;margin-top:6px">Лучше бессрочный токен системного пользователя: Business Manager → Пользователи → Системные пользователи → Сгенерировать токен (срок: «Никогда»). Бот сначала проверит токен и сохранит только рабочий.</div></div>`;
+}
 function renderMeta(){
   const m=DATA.meta||{};
   const admin=DATA.user.role==='admin';
   let head=`<div class="card"><h3>📲 Instagram + Ads</h3>`;
-  if(!m.configured) return head+`<div class="muted">Не подключено. Нужен токен Meta (META_TOKEN) — см. инструкцию у Саида.</div>${admin?'':''}</div>`;
+  if(!m.configured) return head+(admin
+    ?`<div class="muted">Не подключено — вставь токен Meta.</div>${metaTokenForm()}<div id="metaOut" class="muted" style="font-size:12px;white-space:pre-wrap;margin-top:6px"></div>`
+    :`<div class="muted">Не подключено — токен Meta задаёт админ.</div>`)+`</div>`;
   let body='';
   // привязки проектов (admin)
   if(admin){
@@ -1446,10 +1455,11 @@ function renderMeta(){
         <button class="xbtn" data-metabind="${esc(p.key)}|ig">IG ${b.ig?'✅':'—'}</button>
         <button class="xbtn" data-metabind="${esc(p.key)}|ad">Ads ${b.ad?'✅':'—'}</button></span></div>`;
     }).join('');
-    body+=`<div class="row" style="gap:6px;margin-top:8px">
+    body+=`<div class="row" style="gap:6px;margin-top:8px;justify-content:flex-start;flex-wrap:wrap">
       <button class="btn xs sec" data-metastatus>🔍 Аккаунты</button>
       <button class="btn xs sec" data-metapull>⬇️ Обновить за вчера</button>
-    </div><div id="metaOut" class="muted" style="font-size:12px;white-space:pre-wrap;margin-top:6px"></div>`;
+      <button class="btn xs sec" data-metatokopen>🔑 Токен</button>
+    </div>${META_TOK_OPEN?metaTokenForm():''}<div id="metaOut" class="muted" style="font-size:12px;white-space:pre-wrap;margin-top:6px"></div>`;
   }
   // снэпшоты по дням
   const days=m.days||[];
@@ -1472,6 +1482,13 @@ function renderMeta(){
   return head+body+`</div>`;
 }
 
+// человекочитаемый статус токена: чей, до когда, каких прав не хватает
+function metaTokenText(t){
+  let s='✅ Токен работает — '+(t.who||'');
+  s+='\nСрок: '+(t.expiresAt?('до '+new Date(t.expiresAt).toLocaleDateString('ru-RU')+(t.expiresAt-Date.now()<14*86400000?' ⚠️ скоро истечёт':'')):'бессрочный');
+  if(t.missing&&t.missing.length) s+='\n⚠️ Не хватает прав: '+t.missing.join(', ')+' — часть аналитики будет пустой.';
+  return s;
+}
 function fmtN(n){ return (n==null?0:n).toLocaleString('ru-RU'); }
 function fmtM(n,cur){ return (Math.round(n*100)/100).toLocaleString('ru-RU')+' '+(cur||''); }
 function renderAnalytics(){
@@ -1494,7 +1511,7 @@ function renderAnalytics(){
   let body='';
   if(!projs.length) body='<div class="empty">Ни один проект не привязан к Meta.<br>Отчёт → 🔍 Аккаунты → кнопки IG/Ads.</div>';
   else if(AN_LOADING) body='<div class="empty">⏳ Загружаю данные Meta…</div>';
-  else if(AN_ERR) body=`<div class="empty">⚠️ ${esc(AN_ERR)}</div>`;
+  else if(AN_ERR) body=`<div class="empty">⚠️ ${esc(AN_ERR)}${/access token|code 190/i.test(AN_ERR)&&DATA.user.role==='admin'?'<br><br>Токен Meta не работает. Вставь новый: «Отчёт» → 📲 Instagram + Ads → 🔑 Токен.':''}</div>`;
   else if(!AN_DATA){ if(AN_PROJ||AN_SEC==='cmp') setTimeout(anLoad,0); body='<div class="empty">⏳</div>'; }
   else if(AN_SEC==='ads') body=anAds();
   else if(AN_SEC==='media') body=anMedia();
@@ -3044,11 +3061,11 @@ function bind(){
     if(!r.configured){mOut('Токен не задан (META_TOKEN).');return;}
     if(r.error){
       // показываем настоящую причину, а не «аккаунтов нет»
-      mOut('❌ Токен не работает\n\n'+r.error+'\n\nЧто делать: проверь приложение на developers.facebook.com → статус и ограничения, затем выпусти новый long-lived токен и замени META_TOKEN на Vercel.');
+      mOut('❌ Токен не работает\n\n'+r.error+'\n\nЧто делать: выпусти новый токен (лучше бессрочный, системного пользователя) и вставь его кнопкой 🔑 Токен.');
       return;
     }
     if(r.token&&r.token.ok){
-      mOut('✅ Токен работает — '+(r.token.who||'')+(r.token.scopes&&r.token.scopes.length?('\nПрава: '+r.token.scopes.join(', ')):'')+'\n\nЗагружаю аккаунты…');
+      mOut(metaTokenText(r.token)+'\n\nЗагружаю аккаунты…');
     }
     let s='Instagram-аккаунты:\n'+(r.igAccounts||[]).map(a=>`@${a.username} (${a.src||''}) — id ${a.ig_id}`).join('\n');
     s+='\n\nРекламные кабинеты:\n'+(r.adAccounts||[]).map(a=>`${a.name}${a.src?' ('+a.src+')':''} — ${a.id}`).join('\n');
@@ -3062,6 +3079,19 @@ function bind(){
     // после загрузки списка — дорисуем кнопки привязки
     window.META_ACC=r;
   };
+  const mto=document.querySelector('[data-metatokopen]'); if(mto) mto.onclick=()=>{META_TOK_OPEN=!META_TOK_OPEN;render();};
+  const mts=document.querySelector('[data-metatoken]'); if(mts) mts.onclick=()=>busyClick(mts, async()=>{
+    const token=(val('metaTok')||'').trim();
+    if(!token){tg.showAlert&&tg.showAlert('Вставь токен');return;}
+    mOut('Проверяю токен в Meta…');
+    const r=await api('POST',{type:'meta_set_token',token});
+    if(!r||!r.token||!r.token.ok){ mOut('❌ Токен не сохранён — Meta его не принимает:\n\n'+((r&&r.error)||'ошибка')); return; }
+    const was=DATA.meta&&DATA.meta.configured;
+    META_TOK_OPEN=false;
+    if(!was){ await load(); }
+    else render();
+    mOut('💾 Сохранено.\n'+metaTokenText(r.token));
+  });
   const mpl=document.querySelector('[data-metapull]'); if(mpl) mpl.onclick=async()=>{
     mOut('Тяну данные за вчера…');
     const r=await api('POST',{type:'meta_pull'});

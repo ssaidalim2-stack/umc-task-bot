@@ -3,7 +3,7 @@ import * as d2 from "./db2";
 import { t, Lang } from "./i18n";
 import { bot, safeSend } from "./bot";
 import { buildReport, buildTeamMorning, buildTeamEvening } from "./views";
-import { metaConfigured, pullSnapshot } from "./meta";
+import { metaConfigured, pullSnapshot, tokenCheck } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
 import * as fin from "./finance";
 
@@ -28,7 +28,7 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   // Meta (IG + Ads): дневной снэпшот за вчера, в 07:00 — до утреннего отчёта.
   // Сбор данных идёт ВСЕГДА, даже когда уведомления на паузе: он никому ничего не шлёт,
   // а прерывать историю цифр из-за выключенных уведомлений нельзя.
-  if (hour === 7 && metaConfigured() && (await d2.claimMarker("meta_pull", day))) {
+  if (hour === 7 && (await metaConfigured()) && (await d2.claimMarker("meta_pull", day))) {
     const yesterday = new Date(now + TZ_OFFSET - 24 * HOUR).toISOString().slice(0, 10);
     try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
   }
@@ -41,6 +41,9 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
 
   // общий выключатель — касается только исходящих сообщений, не сбора данных выше
   if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
+
+  // токен Meta: умер или истекает в ближайшую неделю — сказать админам, а не молчать полтора месяца
+  if (hour === 9 && (await metaConfigured()) && (await d2.claimMarker("meta_token_check", day))) sent += await metaTokenReminder();
 
   // оплаты клиентов, срок которых наступил или прошёл — админам, раз в день
   if (hour === 9 && (await d2.claimMarker("fin_due", day))) sent += await clientPaymentReminders(day);
@@ -106,6 +109,21 @@ async function deadlineReminders(now: number): Promise<number> {
 }
 
 // ---------- подписки ----------
+async function metaTokenReminder(): Promise<number> {
+  const st = await tokenCheck();
+  let text = "";
+  if (!st.ok) text = `⚠️ Токен Meta не работает — аналитика и отчёты по рекламе/Instagram не обновляются.\n\n${st.error}\n\nВставь новый: приложение → Отчёт → 📲 Instagram + Ads → 🔑 Токен.`;
+  else if (st.expiresAt && st.expiresAt - Date.now() < 7 * 24 * HOUR) {
+    const d = new Date(st.expiresAt + TZ_OFFSET).toISOString().slice(0, 10).split("-").reverse().join(".");
+    text = `⏳ Токен Meta истекает ${d}. Выпусти новый (лучше бессрочный, системного пользователя) и вставь: приложение → Отчёт → 📲 Instagram + Ads → 🔑 Токен.`;
+  }
+  if (!text) return 0;
+  const ids = new Set<number>(ENV_ADMINS);
+  (await db.listAdmins()).forEach((a) => ids.add(a.telegram_id));
+  for (const id of ids) await safeSend(id, text);
+  return ids.size;
+}
+
 async function clientPaymentReminders(today: string): Promise<number> {
   const due = await fin.dueClientPayments(today);
   if (!due.length) return 0;

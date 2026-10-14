@@ -449,8 +449,9 @@ export async function getData(userId: number) {
   }
 
   // Meta (IG+Ads): последние 7 дневных снэпшотов — только для админа/менеджера
-  let metaOut: any = { configured: meta.metaConfigured(), days: [], map: {} };
-  if ((role === "admin" || role === "manager") && meta.metaConfigured()) {
+  const metaOn = await meta.metaConfigured();
+  let metaOut: any = { configured: metaOn, days: [], map: {} };
+  if ((role === "admin" || role === "manager") && metaOn) {
     const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() + 5 * 3600 * 1000 - (i + 1) * 86400000).toISOString().slice(0, 10));
     const [map, ...snaps] = await Promise.all([meta.getMetaMap(), ...days.map((d) => meta.getSnapshot(d))]);
     metaOut = { configured: true, map, days: days.map((d, i) => ({ day: d, snap: snaps[i] })).filter((x) => x.snap) };
@@ -593,13 +594,18 @@ export async function doAction(userId: number, action: any) {
     // ---------- Meta (IG + Ads) ----------
     case "meta_status": {
       if (role !== "admin") return { error: "нет доступа" };
-      if (!meta.metaConfigured()) return { configured: false };
+      if (!(await meta.metaConfigured())) return { configured: false };
       // сперва живая проверка токена: если он мёртв, список аккаунтов всё равно
       // вернётся пустым и скроет настоящую причину
       const chk = await meta.tokenCheck();
       if (!chk.ok) return { configured: true, token: chk, error: chk.error };
       try { return { configured: true, token: chk, ...(await meta.listAvailableAccounts()) }; }
       catch (e: any) { return { configured: true, token: chk, error: String(e.message || e) }; }
+    }
+    case "meta_set_token": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const st = await meta.setToken(String(action.token || ""));
+      return { configured: st.ok || (await meta.metaConfigured()), token: st, error: st.ok ? undefined : st.error };
     }
     case "meta_bind": {
       if (role !== "admin") return { error: "нет доступа" };
