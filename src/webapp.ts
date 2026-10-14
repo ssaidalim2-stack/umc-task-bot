@@ -6,6 +6,7 @@ import { bot } from "./bot";
 import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNER_ROLES, nextStage } from "./projects";
 import * as meta from "./meta";
 import { aiConfigured, generateTz } from "./ai";
+import * as fin from "./finance";
 
 // ---------- проверка подписи Telegram WebApp ----------
 export function validateInitData(initData: string): { ok: boolean; user?: any } {
@@ -34,7 +35,7 @@ export function roleOf(member: db.Member | null, isAdmin: boolean): string {
 }
 
 const TABS_BY_ROLE: Record<string, string[]> = {
-  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "team", "projects", "sales", "umc", "stories"],
+  admin: ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "finance", "team", "projects", "sales", "umc", "stories"],
   manager: ["home", "board", "tasks", "week", "tz", "plan", "stories", "calendar", "work", "analytics", "report"],
   pm: ["home", "board", "tasks", "week", "tz", "plan", "stories", "calendar", "work", "analytics", "report"],
   videographer: ["home", "mywork", "tasks", "week"],
@@ -43,7 +44,7 @@ const TABS_BY_ROLE: Record<string, string[]> = {
   sales: ["home", "sales", "umc", "tasks", "week"],
   member: ["home", "tasks", "week"],
 };
-const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "mywork", "team", "projects", "sales", "umc", "stories"];
+const ALL_TABS = ["home", "board", "tasks", "week", "tz", "plan", "calendar", "video", "work", "analytics", "report", "subs", "finance", "mywork", "team", "projects", "sales", "umc", "stories"];
 
 // раздел ТЗ → какая РОЛЬ исполняет (не имя — состав команды может меняться)
 const SECTION = {
@@ -151,6 +152,19 @@ async function hasTabAccess(userId: number, member: db.Member | null, isAdmin: b
 }
 // отсутствующая таблица — самая вероятная причина сбоя тут (миграция не выполнена),
 // поэтому объясняем это по-человечески, а не кодом PostgREST
+// финансы — только админ: там зарплаты всей команды, поэтому вкладку нельзя выдать
+// точечно через права разделов
+function withFinanceTab(tabs: string[], isAdmin: boolean): string[] {
+  const rest = tabs.filter((t) => t !== "finance");
+  return isAdmin ? [...rest, "finance"] : rest;
+}
+function finDbError(e: any): string {
+  const msg = String(e?.message || e);
+  if (/fin_(entries|pay_rules|project_terms)/.test(msg) && /(schema cache|does not exist|not find)/i.test(msg)) {
+    return "Раздел «Финансы» ещё не создан в базе: выполни миграцию supabase/migration_v6_finance.sql в Supabase → SQL Editor.";
+  }
+  return "Ошибка финансов: " + msg;
+}
 function umcDbError(e: any): string {
   const msg = String(e?.message || e);
   if (/umc_leads/.test(msg) && /(schema cache|does not exist|not find)/i.test(msg)) {
@@ -256,9 +270,9 @@ export async function getData(userId: number) {
   const role = roleOf(member, isAdmin);
   const customTabs = await d2.getMemberTabs(userId);
   const memberRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
-  const tabs = customTabs
+  const tabs = withFinanceTab(customTabs
     ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))]))
-    : Array.from(new Set(memberRoles.flatMap((r) => TABS_BY_ROLE[r] || [])));
+    : Array.from(new Set(memberRoles.flatMap((r) => TABS_BY_ROLE[r] || []))), isAdmin);
 
   // обычный менеджер может быть привязан к конкретным проектам (видит только их);
   // admin и роль pm (project manager) всегда видят всё
@@ -447,7 +461,7 @@ export async function getData(userId: number) {
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads, umcLeads,
     ...calendarExtra,
-    subscriptions: subs.map((s) => ({ id: s.id, app: s.app, expires_on: s.expires_on, purchased_on: s.purchased_on, period_days: s.period_days })),
+    subscriptions: subs.map((s) => ({ id: s.id, app: s.app, expires_on: s.expires_on, purchased_on: s.purchased_on, period_days: s.period_days, price: s.price ?? null, currency: s.currency || "USD" })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
 }
@@ -458,6 +472,11 @@ export async function doAction(userId: number, action: any) {
   const isAdmin = isAdminId(member, userId);
   const role = roleOf(member, isAdmin);
 
+  if (typeof action.type === "string" && action.type.startsWith("fin_")) {
+    if (!isAdmin) return { error: "нет доступа" };
+    try { return await fin.handle(userId, action); }
+    catch (e: any) { return { error: finDbError(e) }; }
+  }
   switch (action.type) {
     case "vid_adv": {
       const item = await d2.getItem(+action.id);
@@ -480,6 +499,7 @@ export async function doAction(userId: number, action: any) {
         break; // не двигаем статус до подтверждения
       }
       await d2.updateItem(item.id, { stage: nx, status: nx === "published" ? "done" : "in_progress" });
+      await fin.onItemStage(item, item.stage, nx);
       if (nx === "shoot") await autoCloseTasksForStage(item.id, "shoot");
       await notifyStage(item.project_id, item.idx, nx);
       break;
@@ -488,7 +508,7 @@ export async function doAction(userId: number, action: any) {
     case "gfx_done": {
       const graphics = await d2.listItems(+action.projectId, "graphic");
       const next = graphics.find((g) => g.stage !== "done");
-      if (next) await d2.updateItem(next.id, { stage: "done", status: "done" });
+      if (next) { await d2.updateItem(next.id, { stage: "done", status: "done" }); await fin.onItemStage(next, next.stage, "done"); }
       break;
     }
     case "task_done": {
@@ -511,7 +531,7 @@ export async function doAction(userId: number, action: any) {
       if (!t) break;
       if (role === "admin") {
         await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
-        if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" });
+        if (t.item_id) await publishItem(t.item_id);
         if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» полностью утверждена. Отлично!`); } catch {} }
       } else if (role === "manager" && (t.status === "await_manager" || t.status === "await_confirm")) {
         await d2.setTaskStatus(t.id, "await_admin");
@@ -718,7 +738,7 @@ export async function doAction(userId: number, action: any) {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
       await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
-      if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" }); // подтверждённая публикация
+      if (t.item_id) await publishItem(t.item_id); // подтверждённая публикация
       if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Твоя задача «${t.title}» подтверждена.`); } catch {} }
       break;
     }
@@ -843,6 +863,7 @@ export async function doAction(userId: number, action: any) {
       if (f.status) { patch.stage = f.status; patch.status = f.status === "published" || f.status === "done" ? "done" : "in_progress"; }
       else if (item0 && item0.type === "video" && item0.stage === "idea" && scriptTxt.trim()) patch.stage = "script"; // сценарий заполнен → авто-переход в готовый формат
       await d2.updateItem(+action.id, patch);
+      if (item0) await fin.onItemStage({ ...item0, type: patch.type || item0.type }, item0.stage, patch.stage);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
@@ -862,6 +883,7 @@ export async function doAction(userId: number, action: any) {
       if (p.status) { patch.stage = p.status; patch.status = p.status === "published" || p.status === "done" ? "done" : "in_progress"; }
       else if (it.type === "video" && it.stage === "idea" && "script" in p && String(p.script || "").trim()) patch.stage = "script";
       await d2.updateItem(+action.id, patch);
+      await fin.onItemStage({ ...it, type: patch.type || it.type }, it.stage, patch.stage);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
     }
@@ -915,7 +937,12 @@ export async function doAction(userId: number, action: any) {
         : new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
       const exp = /^\d{4}-\d{2}-\d{2}$/.test(f.expires_on || "") ? f.expires_on
         : new Date(new Date(bought).getTime() + days * 86400000).toISOString().slice(0, 10);
-      try { await d2.createSubscription({ app, owner_id: userId, purchased_on: bought, period_days: days, expires_on: exp }); }
+      const price = parseFloat(String(f.price ?? "").replace(/\s/g, "").replace(",", "."));
+      const priced = Number.isFinite(price) && price > 0 ? { price, currency: f.currency === "UZS" ? "UZS" : "USD" } : {};
+      try {
+        const sub = await d2.createSubscription({ app, owner_id: userId, purchased_on: bought, period_days: days, expires_on: exp, ...priced });
+        if (sub) await fin.subscriptionExpense(sub, bought, userId);
+      }
       catch (e: any) { return { error: "не удалось сохранить: " + String(e?.message || e) }; }
       return getData(userId);
     }
@@ -925,6 +952,11 @@ export async function doAction(userId: number, action: any) {
       const patch: any = {};
       if (f.app !== undefined) { const a = String(f.app).trim(); if (!a) return { error: "название не может быть пустым" }; patch.app = a; }
       if (f.period_days !== undefined) patch.period_days = Math.max(1, parseInt(f.period_days, 10) || 30);
+      if (f.price !== undefined) {
+        const price = parseFloat(String(f.price ?? "").replace(/\s/g, "").replace(",", "."));
+        patch.price = Number.isFinite(price) && price > 0 ? price : null;
+        patch.currency = f.currency === "UZS" ? "UZS" : "USD";
+      }
       if (/^\d{4}-\d{2}-\d{2}$/.test(f.purchased_on || "")) patch.purchased_on = f.purchased_on;
       if (/^\d{4}-\d{2}-\d{2}$/.test(f.expires_on || "")) {
         patch.expires_on = f.expires_on;
@@ -946,6 +978,7 @@ export async function doAction(userId: number, action: any) {
       const next = new Date(new Date(base).getTime() + (sub.period_days || 30) * 86400000).toISOString().slice(0, 10);
       try { await d2.updateSubscription(sub.id, { expires_on: next, purchased_on: today, reminded_before: false, reminded_after: false }); }
       catch (e: any) { return { error: "не удалось продлить: " + String(e?.message || e) }; }
+      await fin.subscriptionExpense(sub, today, userId);
       return getData(userId);
     }
     case "sub_delete": {
@@ -1153,6 +1186,13 @@ async function autoCloseTasksForStage(itemId: number, stage: string) {
     await d2.setTaskStatus(t.id, "done", { confirmed_by: 0 });
     if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» закрыта автоматически — видео отмечено как «Снято».`); } catch {} }
   }
+}
+
+// перевести пункт в «Опубликовано» (подтверждение публикации) + сдельные начисления за пропущенные этапы
+async function publishItem(itemId: number) {
+  const it = await d2.getItem(itemId);
+  await d2.updateItem(itemId, { stage: "published", status: "done" });
+  await fin.onItemStage(it, it?.stage, "published");
 }
 
 async function managerRecipients(): Promise<number[]> {

@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import * as views from "./views";
+import * as fin from "./finance";
 import { STAGE_OWNER_ROLES, STAGE_LABEL, nextStage, APPS } from "./projects";
 import { roleOf } from "./webapp";
 
@@ -67,6 +68,7 @@ export function registerV2(bot: Bot) {
     if (!nx) return ctx.answerCallbackQuery({ text: "Уже опубликовано" });
     const status = nx === "published" ? "done" : "in_progress";
     await d2.updateItem(id, { stage: nx, status });
+    await fin.onItemStage(item, item.stage, nx);
     await notifyStage(bot, item.project_id, item.idx, nx);
     const v = await views.videoCard(id);
     if (v) await nav(ctx, v);
@@ -75,7 +77,7 @@ export function registerV2(bot: Bot) {
     const projectId = +ctx.match![1];
     const graphics = await d2.listItems(projectId, "graphic");
     const next = graphics.find((g) => g.stage !== "done");
-    if (next) await d2.updateItem(next.id, { stage: "done", status: "done" });
+    if (next) { await d2.updateItem(next.id, { stage: "done", status: "done" }); await fin.onItemStage(next, next.stage, "done"); }
     await nav(ctx, await views.projectView(projectId));
   });
 
@@ -117,7 +119,11 @@ export function registerV2(bot: Bot) {
     const t = await d2.getTaskRow(id);
     if (!t) return ctx.answerCallbackQuery();
     await d2.setTaskStatus(id, "done", { confirmed_by: ctx.from.id });
-    if (t.item_id) await d2.updateItem(t.item_id, { stage: "published", status: "done" }); // подтверждённая публикация видео
+    if (t.item_id) {
+      const it = await d2.getItem(t.item_id);
+      await d2.updateItem(t.item_id, { stage: "published", status: "done" }); // подтверждённая публикация видео
+      await fin.onItemStage(it, it?.stage, "published");
+    }
     await ctx.answerCallbackQuery({ text: "Подтверждено ✅" });
     try { await ctx.editMessageText(`✅ Задача #${id} «${t.title}» подтверждена.`); } catch {}
     if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Твоя задача «${t.title}» подтверждена. Отлично!`); } catch {} }
