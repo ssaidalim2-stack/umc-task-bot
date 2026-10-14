@@ -4,7 +4,7 @@ import { PERSON_KEYWORDS } from "./projects";
 export interface Project { id: number; key: string; name: string; }
 export interface ContentPlan { id: number; project_id: number; period: string; sheet_url: string | null; video_target: number; graphic_target: number; is_active: boolean; }
 export interface ContentItem { id: number; plan_id: number; project_id: number; type: string; idx: number; title: string | null; format: string | null; stage: string; status: string; }
-export interface Subscription { id: number; app: string; owner_id: number | null; purchased_on: string; period_days: number; expires_on: string; reminded_before: boolean; reminded_after: boolean; active: boolean; }
+export interface Subscription { id: number; app: string; owner_id: number | null; purchased_on: string; period_days: number; expires_on: string; reminded_before: boolean; reminded_after: boolean; active: boolean; price?: number | null; currency?: string | null; }
 export interface GroupBinding { id: number; chat_id: number; project_id: number | null; specialty: string | null; }
 
 // ---------- projects / plans ----------
@@ -335,9 +335,10 @@ export async function listSubscriptions(): Promise<Subscription[]> {
 export async function markSub(id: number, field: "reminded_before" | "reminded_after"): Promise<void> {
   await supabase.from("subscriptions").update({ [field]: true }).eq("id", id);
 }
-export async function createSubscription(input: { app: string; owner_id: number; purchased_on: string; period_days: number; expires_on: string }): Promise<void> {
-  const { error } = await supabase.from("subscriptions").insert({ ...input, active: true });
+export async function createSubscription(input: { app: string; owner_id: number; purchased_on: string; period_days: number; expires_on: string; price?: number; currency?: string }): Promise<Subscription | null> {
+  const { data, error } = await supabase.from("subscriptions").insert({ ...input, active: true }).select("*").single();
   if (error) throw new Error(error.message);
+  return (data as Subscription) ?? null;
 }
 export async function updateSubscription(id: number, patch: Partial<Subscription>): Promise<void> {
   const { error } = await supabase.from("subscriptions").update(patch).eq("id", id);

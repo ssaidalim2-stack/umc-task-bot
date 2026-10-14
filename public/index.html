@@ -175,6 +175,10 @@
   @media (min-width:1500px){
     header,.wrap{max-width:1360px}
   }
+  /* финансы: на широком экране карточки раздела встают в две колонки */
+  @media (min-width:720px){
+    .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}
+  }
 </style>
 </head>
 <body>
@@ -905,6 +909,7 @@ const TABMETA={
   tz:{ic:"✍️",t:"ТЗ"}, tasks:{ic:"✅",t:"Задачи"}, report:{ic:"📈",t:"Отчёт"},
   subs:{ic:"💳",t:"Подписки"}, mywork:{ic:"🗂️",t:"Моя работа"}, analytics:{ic:"📊",t:"Аналитика"}, team:{ic:"👥",t:"Команда"}, projects:{ic:"🗂",t:"Проекты"},
   sales:{ic:"💼",t:"Отдел продаж"}, calendar:{ic:"📅",t:"Календарь"}, week:{ic:"🗓",t:"Неделя"}, umc:{ic:"🌐",t:"umc.uz"}, stories:{ic:"📱",t:"Сторис"},
+  finance:{ic:"💰",t:"Финансы"},
 };
 // ---- аналитика (Meta) ----
 let AN_SEC='ads', AN_PROJ=null, AN_SINCE=null, AN_UNTIL=null, AN_DATA=null, AN_LOADING=false, AN_ERR=null;
@@ -950,7 +955,7 @@ async function silentRefresh(){
   if(document.hidden || ACT_BUSY) return;
   const el=document.activeElement;
   if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
-  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null || FIN_FORM) return;
   try{
     const res=await api('GET');
     DATA=res;
@@ -1047,7 +1052,7 @@ function render(){
   const activeId=active&&active.id;
   const selStart=active&&typeof active.selectionStart==='number'?active.selectionStart:null;
   const selEnd=active&&typeof active.selectionEnd==='number'?active.selectionEnd:null;
-  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar,week:renderWeek,umc:renderUmc,stories:renderStories};
+  const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar,week:renderWeek,umc:renderUmc,stories:renderStories,finance:renderFinance};
   v.innerHTML=(map[TAB]||renderTasks)();
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
@@ -1532,7 +1537,7 @@ function daysLeft(iso){ return Math.round((new Date(iso+'T00:00:00Z')-new Date(w
 function captureSub(){
   if(!SUB_EDIT) return;
   SUB_EDIT.app=val('sb_app'); SUB_EDIT.period_days=val('sb_days');
-  SUB_EDIT.purchased_on=val('sb_bought'); SUB_EDIT.expires_on=val('sb_exp');
+  SUB_EDIT.purchased_on=val('sb_bought'); SUB_EDIT.expires_on=val('sb_exp'); SUB_EDIT.price=val('sb_price');
 }
 function renderSubs(){
   const admin=DATA.user.role==='admin';
@@ -1545,7 +1550,7 @@ function renderSubs(){
       :`<span class="muted">${d} дн.</span>`;
     return `<div class="vid" ${admin?`data-subopen="${s.id}" style="cursor:pointer"`:''}>
       <div style="min-width:0;flex:1"><div><b>${esc(s.app)}</b></div>
-        <div class="muted" style="font-size:12px">до ${s.expires_on}${s.period_days?` · период ${s.period_days} дн.`:''}</div></div>
+        <div class="muted" style="font-size:12px">до ${s.expires_on}${s.period_days?` · период ${s.period_days} дн.`:''}${s.price?` · ${s.currency==='UZS'?Math.round(s.price).toLocaleString('ru-RU')+' сум':'$'+s.price}`:''}</div></div>
       <div style="display:flex;gap:6px;align-items:center;flex:0 0 auto">${mark}
         ${admin?`<button class="xbtn" data-subrenew="${s.id}" title="Продлить на период">↻</button>`:''}</div>
     </div>`;
@@ -1561,13 +1566,17 @@ function renderSubCard(){
   if(!SUB_EDIT){
     const f=isNew?null:(DATA.subscriptions||[]).find(x=>x.id==SUB_OPEN);
     const today=wkKey(tashkentNow());
-    SUB_EDIT=f?{...f}:{app:'',period_days:30,purchased_on:today,expires_on:''};
+    SUB_EDIT=f?{...f,price:f.price||'',currency:f.currency||'USD'}:{app:'',period_days:30,purchased_on:today,expires_on:'',price:'',currency:'USD'};
   }
   const e=SUB_EDIT;
   return `<div class="card">
     <div class="row"><h3>${isNew?'Новая подписка':esc(e.app||'Подписка')}</h3><button class="btn sm sec" data-subclose>← назад</button></div>
     <div class="muted">Название:</div><input id="sb_app" value="${esc(e.app)}" placeholder="напр. CapCut Pro">
     <div class="muted">Период (дней):</div><input id="sb_days" value="${esc(String(e.period_days||30))}" inputmode="numeric" style="max-width:140px">
+    <div class="muted" style="margin-top:6px">Цена за период:</div>
+    <div class="row" style="gap:6px"><input id="sb_price" value="${esc(String(e.price||''))}" inputmode="decimal" placeholder="необязательно" style="flex:1">
+      <div class="pills" style="padding:0">${[["USD","$"],["UZS","сум"]].map(([k,l])=>`<div class="pill ${e.currency===k?'active':''}" data-subcur="${k}">${l}</div>`).join('')}</div></div>
+    <div class="muted" style="font-size:11px">С ценой покупка и каждое продление сами попадут в расходы («Финансы»).</div>
     <div class="muted" style="margin-top:6px">Дата оплаты:</div><input type="date" id="sb_bought" value="${esc(e.purchased_on||'')}">
     <div class="muted" style="margin-top:6px">Действует до:</div><input type="date" id="sb_exp" value="${esc(e.expires_on||'')}">
     <div class="muted" style="font-size:11px;margin-top:4px">Если оставить пустым при создании — посчитается от даты оплаты и периода.</div>
@@ -2141,9 +2150,411 @@ function autoGrow(t){
   t.style.height=Math.min(t.scrollHeight+2,600)+'px';
 }
 function autoGrowAll(){ document.querySelectorAll('textarea').forEach(autoGrow); }
+// ---- финансы (только админ): доходы от клиентов, расходы, зарплаты команды ----
+// Данные грузятся отдельно (fin_load) — в общий DATA не входят, чтобы зарплаты не
+// уезжали в каждый ответ приложения.
+let FIN=null, FIN_CYCLE=null, FIN_LOADING=false, FIN_ERR=null, FIN_SEC='overview', FIN_CUR='USD', FIN_FORM=null, FIN_PERSON=null;
+const FIN_SECS=[["overview","📊 Обзор"],["income","💵 Доходы"],["expense","🧾 Расходы"],["team","👥 Зарплаты"]];
+const FIN_CAT={
+  income:[["fee","Оплата по договору"],["other","Другой доход"]],
+  expense:[["ads","Реклама"],["subs","Подписки"],["location","Локация / аренда"],["props","Реквизит"],["transport","Транспорт"],["equipment","Техника"],["other","Другое"]],
+  accrual:[["bonus","Премия"],["deduction","Вычет"],["other","Другое"],["salary","Оклад"],["project_fixed","Фикс за проект"],["shoot","Съёмка"],["edit","Монтаж"],["graphic","Графика"]],
+  payout:[["salary","Выплата"]],
+};
+const FIN_RULE_KINDS=[["salary","Оклад по должности"],["project_fixed","Фикс за проект"],["shoot","За съёмку видео"],["edit","За монтаж видео"],["graphic","За графику"]];
+const FIN_SCHED=[["prepay","100% в начале цикла"],["split","50% в начале + 50% в конце"],["post","100% в конце цикла"],["manual","Вручную / частями"]];
+const FIN_KIND_TITLE={income:"Доход",expense:"Расход",accrual:"Начисление",payout:"Выплата"};
+function finCatLabel(kind,cat){ const o=(FIN_CAT[kind]||[]).find(x=>x[0]===cat); return o?o[1]:(cat||'—'); }
+function finRuleLabel(k){ const o=FIN_RULE_KINDS.find(x=>x[0]===k); return o?o[1]:k; }
+function finSchedLabel(k){ const o=FIN_SCHED.find(x=>x[0]===k); return o?o[1]:k; }
+function fUZS(n){ return Math.round(n||0).toLocaleString('ru-RU')+' сум'; }
+function fUSD(n){ const v=Math.round((n||0)*100)/100; return (v<0?'−':'')+'$'+Math.abs(v).toLocaleString('ru-RU',{maximumFractionDigits:Math.abs(v)<100?2:0}); }
+function fNative(n,c){ return c==='USD'?fUSD(n):fUZS(n); }
+// одна сумма сразу в двух валютах: выбранная — крупно, вторая — мелко
+function fBoth(uzs,usd){ return FIN_CUR==='USD'?`<b>${fUSD(usd)}</b> <span class="muted">· ${fUZS(uzs)}</span>`:`<b>${fUZS(uzs)}</b> <span class="muted">· ${fUSD(usd)}</span>`; }
+function fOne(uzs,usd){ return FIN_CUR==='USD'?fUSD(usd):fUZS(uzs); }
+function finSum(list){ return list.reduce((a,e)=>({uzs:a.uzs+(e.uzs||0),usd:a.usd+(e.usd||0)}),{uzs:0,usd:0}); }
+// сумма в родной валюте каждой записи — для зарплат, где пересчёт курсом только путает
+function finNat(list){ const o={UZS:0,USD:0}; for(const e of list) o[e.currency==='USD'?'USD':'UZS']+=e.amount; return o; }
+function fNat(o){ return [o.USD?fUSD(o.USD):'',o.UZS?fUZS(o.UZS):''].filter(Boolean).join(' + ')||'0'; }
+function finAdd(a,b,k){ return {uzs:a.uzs+k*b.uzs,usd:a.usd+k*b.usd}; }
+function finCycleLabel(c){
+  const[y,m]=c.split('-').map(Number);
+  const s=new Date(Date.UTC(y,m-1,15)), e=new Date(Date.UTC(y,m,14));
+  const d=x=>String(x.getUTCDate()).padStart(2,'0')+'.'+String(x.getUTCMonth()+1).padStart(2,'0');
+  return `${d(s)} – ${d(e)}.${e.getUTCFullYear()}`;
+}
+function finShift(c,n){ const[y,m]=c.split('-').map(Number); const d=new Date(Date.UTC(y,m-1+n,1)); return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0'); }
+function finToday(){ return wkKey(tashkentNow()); }
+function finDate(iso){ return iso?iso.split('-').reverse().join('.'):''; }
+function finProjName(id){ if(id==null) return 'Общие'; const p=(FIN&&FIN.projects||[]).find(x=>x.id==id); return p?p.name:'—'; }
+function finPersonName(id){ const p=(FIN&&FIN.people||[]).find(x=>x.id==id); return p?p.name:'— не указан —'; }
+async function finLoad(){
+  FIN_LOADING=true; FIN_ERR=null; render();
+  try{
+    const r=await api('POST',{type:'fin_load',cycle:FIN_CYCLE});
+    if(!r||r.error){ FIN_ERR=(r&&r.error)||'ошибка'; } else { FIN=r; FIN_CYCLE=r.cycle; }
+  }catch(e){ FIN_ERR='нет связи'; }
+  FIN_LOADING=false; render();
+}
+// действие + свежие данные финансов в ответ; true — если прошло без ошибки
+async function finAct(payload){
+  if(ACT_BUSY) return false;
+  ACT_BUSY=true; haptic();
+  try{
+    const r=await api('POST',{...payload,cycle:FIN_CYCLE});
+    if(!r||r.error){ tg.showAlert&&tg.showAlert((r&&r.error)||'ошибка'); return false; }
+    FIN=r; return true;
+  }catch(e){ tg.showAlert&&tg.showAlert('нет связи — не сохранено'); return false; }
+  finally{ ACT_BUSY=false; }
+}
+function finCapture(){
+  if(!FIN_FORM) return;
+  document.querySelectorAll('[data-ff]').forEach(el=>{ FIN_FORM[el.dataset.ff]=el.type==='checkbox'?el.checked:el.value; });
+}
+function finSelect(field,opts,value,attrs){
+  return `<select class="rsel" data-ff="${field}" style="width:100%;padding:9px 8px" ${attrs||''}>${opts.map(([k,l])=>`<option value="${esc(String(k))}" ${String(value)===String(k)?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
+}
+function finCurPills(field,value){
+  return `<div class="pills" style="padding:2px 0 4px">${[["UZS","сум"],["USD","$"]].map(([k,l])=>`<div class="pill ${value===k?'active':''}" data-ffpill="${field}:${k}">${l}</div>`).join('')}</div>`;
+}
+function finProjOpts(withGeneral){
+  const list=(FIN.projects||[]).filter(p=>!p.archived).map(p=>[p.id,p.name]);
+  return withGeneral?[["","Общие (без проекта)"],...list]:list;
+}
+function finCycleOpts(){ const out=[]; for(let i=-6;i<=2;i++){ const c=finShift(FIN.current,i); out.push([c,finCycleLabel(c)+(i===0?' (текущий)':'')]); } return out; }
+
+function renderFinance(){
+  if(DATA.user.role!=='admin') return '<div class="empty">Раздел доступен только админу</div>';
+  if(!FIN&&!FIN_LOADING&&!FIN_ERR){ setTimeout(finLoad,0); return umcLoader('Считаю финансы…'); }
+  if(FIN_LOADING&&!FIN) return umcLoader('Считаю финансы…');
+  if(FIN_ERR&&!FIN) return `<div class="card"><h3>💰 Финансы</h3><div class="muted" style="color:#e5484d">${esc(FIN_ERR)}</div><button class="btn sm" data-finreload style="margin-top:10px">Повторить</button></div>`;
+  if(FIN_FORM) return renderFinForm();
+  if(FIN_PERSON!=null) return renderFinPerson();
+  const r=FIN.rate||{};
+  const rateTxt=r.rate?`1$ = ${Math.round(r.rate*100)/100} сум <span class="muted">(${r.source==='manual'?'вручную':'ЦБ'}, ${finDate(r.date)})</span>`:'<span style="color:#e5484d">курс недоступен — задай вручную</span>';
+  const head=`<div class="card">
+    <div class="row"><h3>💰 Финансы</h3>
+      <div class="pills" style="padding:0">${[["USD","$"],["UZS","сум"]].map(([k,l])=>`<div class="pill ${FIN_CUR===k?'active':''}" data-fincur="${k}">${l}</div>`).join('')}</div></div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn sm sec" data-fincyc="-1">‹</button>
+      <div style="text-align:center;flex:1"><b>${finCycleLabel(FIN.cycle)}</b>${FIN.cycle===FIN.current?' <span class="badge">текущий</span>':''}${FIN_LOADING?' <span class="muted">…</span>':''}</div>
+      <button class="btn sm sec" data-fincyc="1">›</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:8px">Курс: ${rateTxt} <button class="xbtn" data-finrate title="Задать курс вручную">✏️</button></div>
+  </div>
+  <div class="pills">${FIN_SECS.map(([k,l])=>`<div class="pill ${FIN_SEC===k?'active':''}" data-finsec="${k}">${l}</div>`).join('')}</div>`;
+  const body=FIN_SEC==='income'?renderFinIncome():FIN_SEC==='expense'?renderFinExpense():FIN_SEC==='team'?renderFinTeam():renderFinOverview();
+  return head+body;
+}
+
+function renderFinOverview(){
+  const E=FIN.entries||[];
+  const inc=E.filter(e=>e.kind==='income'), acc=E.filter(e=>e.kind==='accrual'), exp=E.filter(e=>e.kind==='expense'), pay=E.filter(e=>e.kind==='payout');
+  const rev=finSum(inc), got=finSum(inc.filter(e=>e.status==='done')), wait=finSum(inc.filter(e=>e.status==='planned'));
+  const team=finSum(acc), other=finSum(exp);
+  const profit=finAdd(finAdd(rev,team,-1),other,-1);
+  const margin=rev.usd?Math.round(profit.usd/rev.usd*100):null;
+  const today=finToday();
+  const debts=FIN.openIncome||[], overdue=debts.filter(e=>e.due_on&&e.due_on<today);
+  // долг перед командой — в родной валюте, без пересчёта курсом
+  let owe={UZS:0,USD:0}, adv={UZS:0,USD:0};
+  for(const p of FIN.people||[]) for(const c of ['UZS','USD']){ const v=p.balance[c]||0; if(v>0) owe[c]+=v; else if(v<0) adv[c]+=-v; }
+  // разрез по проектам: «Общие» — оклады по должности и расходы без проекта
+  const keys=new Set(E.filter(e=>e.kind!=='payout').map(e=>e.project_id==null?'g':String(e.project_id)));
+  const rows=[...keys].map(k=>{
+    const pid=k==='g'?null:+k, mine=E.filter(e=>(e.project_id==null?'g':String(e.project_id))===k);
+    const r=finSum(mine.filter(e=>e.kind==='income')), t=finSum(mine.filter(e=>e.kind==='accrual')), x=finSum(mine.filter(e=>e.kind==='expense'));
+    return {pid,name:finProjName(pid),r,t,x,p:finAdd(finAdd(r,t,-1),x,-1)};
+  }).sort((a,b)=>(a.pid==null)-(b.pid==null)||b.r.usd-a.r.usd);
+  const color=v=>v<0?'color:#e5484d':'';
+  const table=rows.length?`<div style="overflow-x:auto"><table class="ctab"><tr><th>Проект</th><th>Доход</th><th>Команда</th><th>Расходы</th><th>Прибыль</th></tr>
+    ${rows.map(x=>`<tr><td>${esc(x.name)}</td><td>${fOne(x.r.uzs,x.r.usd)}</td><td>${fOne(x.t.uzs,x.t.usd)}</td><td>${fOne(x.x.uzs,x.x.usd)}</td><td style="font-weight:700;${color(x.p.usd)}">${fOne(x.p.uzs,x.p.usd)}</td></tr>`).join('')}
+    <tr><td>Итого</td><td><b>${fOne(rev.uzs,rev.usd)}</b></td><td><b>${fOne(team.uzs,team.usd)}</b></td><td><b>${fOne(other.uzs,other.usd)}</b></td><td style="font-weight:800;${color(profit.usd)}">${fOne(profit.uzs,profit.usd)}</td></tr></table></div>`
+    :'<div class="muted">В этом цикле пока нет ни доходов, ни расходов.</div>';
+  const unas=(FIN.unassigned||[]).length;
+  return `<div class="fgrid">
+  <div class="card">
+    <div class="muted">Прибыль за цикл</div>
+    <div style="font-size:24px;margin:4px 0;${color(profit.usd)}">${fBoth(profit.uzs,profit.usd)}</div>
+    ${margin!=null?`<div class="muted">Маржа: <b>${margin}%</b></div>`:''}
+    <div class="vid"><div>💵 Доход по договорам</div><div style="text-align:right">${fBoth(rev.uzs,rev.usd)}</div></div>
+    <div class="muted" style="font-size:12px;margin:-4px 0 4px">получено ${fOne(got.uzs,got.usd)} · ждём ${fOne(wait.uzs,wait.usd)}</div>
+    <div class="vid"><div>👥 Команда (начислено)</div><div style="text-align:right">${fBoth(team.uzs,team.usd)}</div></div>
+    <div class="vid"><div>🧾 Прочие расходы</div><div style="text-align:right">${fBoth(other.uzs,other.usd)}</div></div>
+  </div>
+  <div class="card">
+    <h3>🏦 Деньги сейчас</h3>
+    <div class="vid" data-finsec="income" style="cursor:pointer"><div>Клиенты должны нам<div class="muted" style="font-size:12px">оплат: ${debts.length}${overdue.length?` · <span style="color:#e5484d">${overdue.length} просрочено</span>`:''}</div></div><div style="text-align:right">${fBoth(finSum(debts).uzs,finSum(debts).usd)}</div></div>
+    <div class="vid" data-finsec="team" style="cursor:pointer"><div>Мы должны команде</div><div style="text-align:right"><b>${fNat(owe)}</b></div></div>
+    ${adv.UZS||adv.USD?`<div class="vid" data-finsec="team" style="cursor:pointer"><div>Выдано авансом<div class="muted" style="font-size:12px">ещё не отработано</div></div><div style="text-align:right"><b>${fNat(adv)}</b></div></div>`:''}
+    <div class="vid"><div>Получено в этом цикле</div><div style="text-align:right">${fBoth(got.uzs,got.usd)}</div></div>
+    <div class="vid"><div>Выплачено команде в цикле</div><div style="text-align:right">${fBoth(finSum(pay).uzs,finSum(pay).usd)}</div></div>
+  </div>
+  </div>
+  ${unas?`<div class="card" data-finsec="team" style="cursor:pointer;border-color:#f5a524"><b>⚠️ ${unas} начислени${unas===1?'е':'я'} без исполнителя</b><div class="muted" style="font-size:12px">Бот не понял, кто снимал/монтировал. Открой «Зарплаты» и выбери человека.</div></div>`:''}
+  <div class="card"><h3>📁 По проектам</h3>${table}
+    <div class="muted" style="font-size:11px;margin-top:8px">Прибыль = доход цикла − начисления команде − расходы. Выплаты и авансы прибыль не меняют — они гасят долг перед человеком.</div></div>`;
+}
+
+function finEntryRow(e,opts){
+  opts=opts||{};
+  const today=finToday();
+  const st=e.kind==='income'
+    ? (e.status==='planned'?(e.due_on&&e.due_on<today?'<span class="badge" style="background:#e5484d;color:#fff">просрочено</span>':'<span class="badge" style="background:#f5a524;color:#fff">ожидается</span>'):'<span class="badge" style="background:#2ea043;color:#fff">получено</span>')
+    : '';
+  const sub=[opts.who?finPersonName(e.member_id):'', opts.proj!==false?finProjName(e.project_id):'', finCatLabel(e.kind,e.category),
+    e.status==='planned'&&e.due_on?'до '+finDate(e.due_on):(e.paid_on?finDate(e.paid_on):''), opts.cyc?finCycleLabel(e.cycle):''].filter(Boolean).join(' · ');
+  return `<div class="vid" data-finopen="${e.id}" style="cursor:pointer;align-items:flex-start">
+    <div style="min-width:0;flex:1"><div>${esc(e.note||finCatLabel(e.kind,e.category))}</div><div class="muted" style="font-size:12px">${esc(sub)}</div></div>
+    <div style="text-align:right;flex:0 0 auto"><b style="${e.amount<0?'color:#e5484d':''}">${fNative(e.amount,e.currency)}</b>${e.currency==='USD'?`<div class="muted" style="font-size:11px">${fUZS(e.uzs)}</div>`:`<div class="muted" style="font-size:11px">${fUSD(e.usd)}</div>`}
+      ${st?`<div style="margin-top:3px">${st}</div>`:''}
+      ${opts.pay&&e.status==='planned'?`<button class="btn xs" data-finpay="${e.id}" style="margin-top:5px">✅ Получено</button>`:''}</div>
+  </div>`;
+}
+
+function renderFinIncome(){
+  const debts=FIN.openIncome||[];
+  const inc=(FIN.entries||[]).filter(e=>e.kind==='income');
+  const terms=new Map((FIN.terms||[]).map(t=>[t.project_id,t]));
+  const termRows=(FIN.projects||[]).filter(p=>!p.archived).map(p=>{
+    const t=terms.get(p.id);
+    const txt=t&&t.active&&t.fee>0?`${fNative(t.fee,t.currency)} за цикл · ${finSchedLabel(t.schedule)}`:'<span class="muted">условия не заданы</span>';
+    return `<div class="vid" data-finterms="${p.id}" style="cursor:pointer"><div><b>${esc(p.name)}</b><div class="muted" style="font-size:12px">${txt}</div></div><span class="muted">✏️</span></div>`;
+  }).join('');
+  return `<div class="fgrid">
+  <div class="card"><div class="row"><h3>⏳ Ждём оплату</h3><span class="muted">${fBoth(finSum(debts).uzs,finSum(debts).usd)}</span></div>
+    ${debts.length?debts.map(e=>finEntryRow(e,{pay:true,cyc:e.cycle!==FIN.cycle})).join(''):'<div class="muted">Все клиенты рассчитались 🎉</div>'}</div>
+  <div class="card"><div class="row"><h3>💵 Доходы цикла</h3><button class="btn sm" data-finnew="income">＋ Доход</button></div>
+    ${inc.length?inc.map(e=>finEntryRow(e)).join(''):'<div class="muted">В этом цикле доходов нет.</div>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">Доход относится к циклу работы, а не к дню оплаты: предоплата 50% и доплата через месяц — это доход одного цикла.</div></div>
+  </div>
+  <div class="card"><h3>📄 Условия клиентов</h3>${termRows||'<div class="muted">Нет активных проектов.</div>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">По условиям бот сам ставит ожидаемые оплаты в начале каждого цикла и напоминает тебе в 9:00, когда срок наступил. «Вручную / частями» — для разовых и нестандартных договоров: оплаты вносишь сам через «＋ Доход».</div></div>`;
+}
+
+function renderFinExpense(){
+  const exp=(FIN.entries||[]).filter(e=>e.kind==='expense');
+  const byCat={};
+  for(const e of exp){ (byCat[e.category]||(byCat[e.category]=[])).push(e); }
+  const cats=Object.keys(byCat).map(k=>({k,s:finSum(byCat[k])})).sort((a,b)=>b.s.usd-a.s.usd);
+  return `<div class="fgrid">
+  <div class="card"><div class="row"><h3>🧾 Расходы цикла</h3><button class="btn sm" data-finnew="expense">＋ Расход</button></div>
+    ${exp.length?exp.map(e=>finEntryRow(e)).join(''):'<div class="muted">Расходов в этом цикле нет.</div>'}</div>
+  <div class="card"><h3>По категориям</h3>
+    ${cats.length?cats.map(c=>`<div class="vid"><div>${esc(finCatLabel('expense',c.k))}</div><div style="text-align:right">${fBoth(c.s.uzs,c.s.usd)}</div></div>`).join(''):'<div class="muted">—</div>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">Зарплаты сюда не входят — они во вкладке «Зарплаты». Подписка с ценой сама пишет расход при покупке и продлении.</div></div>
+  </div>`;
+}
+
+function finRuleText(r){
+  const proj=r.project_id?' · '+finProjName(r.project_id):(['shoot','edit','graphic'].includes(r.kind)?' · все проекты':'');
+  return `${finRuleLabel(r.kind)}${r.title?' ('+esc(r.title)+')':''}${esc(proj)}: <b>${fNative(r.amount,r.currency)}</b>`;
+}
+function finBalanceText(b){
+  const parts=[];
+  for(const c of ['USD','UZS']){ const v=b[c]||0; if(Math.abs(v)>=0.01) parts.push(v>0?`<span>должны ${fNative(v,c)}</span>`:`<span style="color:#2ea6ff">аванс ${fNative(-v,c)}</span>`); }
+  return parts.join(' · ')||'<span class="muted">в расчёте</span>';
+}
+function renderFinTeam(){
+  const E=FIN.entries||[];
+  const unas=FIN.unassigned||[];
+  const people=(FIN.people||[]).map(p=>{
+    const rules=(FIN.rules||[]).filter(r=>r.member_id===p.id);
+    const accL=E.filter(e=>e.kind==='accrual'&&e.member_id===p.id), paidL=E.filter(e=>e.kind==='payout'&&e.member_id===p.id);
+    const acc=finNat(accL), paid=finNat(paidL);
+    const bal=p.balance||{};
+    const active=rules.length||accL.length||paidL.length||Math.abs(bal.UZS||0)>0.01||Math.abs(bal.USD||0)>0.01;
+    return {p,rules,acc,paid,bal,active};
+  });
+  const row=x=>`<div class="vid" data-finperson="${x.p.id}" style="cursor:pointer;align-items:flex-start">
+    <div style="min-width:0;flex:1"><b>${esc(x.p.name)}</b>
+      <div class="muted" style="font-size:12px">${x.rules.length?x.rules.map(r=>finRuleLabel(r.kind)).filter((v,i,a)=>a.indexOf(v)===i).join(', '):'схема оплаты не задана'}</div>
+      <div style="font-size:12px;margin-top:2px">${finBalanceText(x.bal)}</div></div>
+    <div style="text-align:right;flex:0 0 auto;font-size:13px"><div>начислено <b>${fNat(x.acc)}</b></div><div class="muted">выплачено ${fNat(x.paid)}</div></div>
+  </div>`;
+  const on=people.filter(x=>x.active), off=people.filter(x=>!x.active);
+  const unasHtml=unas.length?`<div class="card" style="border-color:#f5a524"><h3>⚠️ Кому начислить?</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Работа сделана, но бот не понял, кто её делал (ТЗ не уходило конкретному человеку, а людей с этой ролью несколько).</div>
+    ${unas.map(e=>`<div class="vid"><div style="min-width:0;flex:1">${esc(e.note||'')}<div class="muted" style="font-size:12px">${finCycleLabel(e.cycle)}</div></div>
+      <select class="rsel" data-finassign="${e.id}" style="max-width:170px"><option value="">выбрать…</option>${(FIN.people||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`).join('')}</div>`:'';
+  return `${unasHtml}<div class="card"><div class="row"><h3>👥 Зарплаты</h3><span class="muted" style="font-size:12px">${finCycleLabel(FIN.cycle)}</span></div>
+    ${on.length?on.map(row).join(''):'<div class="muted">Пока ни у кого не задана схема оплаты. Нажми на человека ниже.</div>'}
+    ${off.length?`<div class="muted" style="margin:12px 0 2px;font-size:12px">Без схемы оплаты:</div>${off.map(row).join('')}`:''}
+    <div class="muted" style="font-size:11px;margin-top:8px">Должны — начислено больше, чем выплачено (за всё время). Аванс — выдано больше, чем начислено. Сдельная оплата начисляется сама, когда видео отмечено «Снято» / «Смонтировано», а графика — «Готово».</div></div>`;
+}
+
+function renderFinPerson(){
+  const p=(FIN.people||[]).find(x=>x.id==FIN_PERSON);
+  if(!p){ FIN_PERSON=null; return renderFinance(); }
+  const rules=(FIN.rules||[]).filter(r=>r.member_id===p.id);
+  const E=(FIN.entries||[]).filter(e=>e.member_id===p.id);
+  const acc=E.filter(e=>e.kind==='accrual'), pay=E.filter(e=>e.kind==='payout');
+  return `<div class="card">
+    <div class="row"><h3>${esc(p.name)}</h3><button class="btn sm sec" data-finback>← назад</button></div>
+    <div style="font-size:18px;margin:4px 0">${finBalanceText(p.balance||{})}</div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:8px">
+      <button class="btn sm" data-finnew="payout" data-finwho="${p.id}">💸 Выплата / аванс</button>
+      <button class="btn sm sec" data-finnew="accrual" data-finwho="${p.id}" data-fincat="bonus">＋ Премия</button>
+      <button class="btn sm sec" data-finnew="accrual" data-finwho="${p.id}" data-fincat="deduction">− Вычет</button>
+    </div>
+  </div>
+  <div class="fgrid">
+  <div class="card"><div class="row"><h3>⚙️ Схема оплаты</h3><button class="btn sm" data-finrule="new">＋ Добавить</button></div>
+    ${rules.length?rules.map(r=>`<div class="vid"><div style="min-width:0;flex:1;cursor:pointer" data-finrule="${r.id}">${finRuleText(r)}</div><button class="xbtn" data-finruledel="${r.id}" title="Убрать">✕</button></div>`).join(''):'<div class="muted">Не задана. Добавь оклад по должности, фикс за проект или сдельные ставки — их можно совмещать.</div>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">Оклад и фикс за проект начисляются сами в начале каждого цикла. Сдельные ставки — за каждое снятое/смонтированное видео и готовую графику; ставка конкретного проекта важнее общей.</div></div>
+  <div class="card"><h3>📒 ${finCycleLabel(FIN.cycle)}</h3>
+    <div class="muted" style="margin-bottom:2px">Начислено: <b>${fNat(finNat(acc))}</b></div>
+    ${acc.map(e=>finEntryRow(e)).join('')||'<div class="muted" style="font-size:12px">начислений нет</div>'}
+    <div class="muted" style="margin:10px 0 2px">Выплачено: <b>${fNat(finNat(pay))}</b></div>
+    ${pay.map(e=>finEntryRow(e,{proj:false})).join('')||'<div class="muted" style="font-size:12px">выплат нет</div>'}</div>
+  </div>`;
+}
+
+function renderFinForm(){
+  const f=FIN_FORM;
+  const back=`<button class="btn sm sec" data-finclose>← назад</button>`;
+  if(f.mode==='rate'){
+    return `<div class="card"><div class="row"><h3>Курс доллара</h3>${back}</div>
+      <div class="muted">Сколько сум за 1$ (на сегодня). Обычно курс берётся из ЦБ сам — вручную нужно, только если ЦБ недоступен или нужен другой курс.</div>
+      <input data-ff="rate" value="${esc(String(f.rate||''))}" inputmode="decimal" placeholder="напр. 12650" style="margin-top:8px">
+      <button class="btn full" data-finsave>💾 Сохранить</button>
+      <button class="btn sm sec full" data-finrateclear style="margin-top:6px">Вернуть курс ЦБ</button></div>`;
+  }
+  if(f.mode==='pay'){
+    return `<div class="card"><div class="row"><h3>Оплата получена</h3>${back}</div>
+      <div class="muted">${esc(finProjName(f.project_id))} · ожидалось <b>${fNative(f.expected,f.expCur)}</b></div>
+      <div class="muted" style="margin-top:8px">Сколько пришло:</div><input data-ff="amount" value="${esc(String(f.amount))}" inputmode="decimal">
+      ${finCurPills('currency',f.currency)}
+      <div class="muted">Дата:</div><input type="date" data-ff="paid_on" value="${esc(f.paid_on)}">
+      <div class="muted" style="margin-top:6px">Комментарий:</div><input data-ff="note" value="${esc(f.note||'')}" placeholder="напр. наличными / перевод">
+      <div class="muted" style="font-size:11px;margin-top:6px">Пришло меньше — недостающая часть останется в «Ждём оплату». Можно платить в другой валюте: пересчитаю по курсу ЦБ на дату оплаты.</div>
+      <button class="btn full" data-finsave>✅ Сохранить</button></div>`;
+  }
+  if(f.mode==='terms'){
+    return `<div class="card"><div class="row"><h3>Условия: ${esc(finProjName(f.projectId))}</h3>${back}</div>
+      <div class="muted">Сумма за цикл (месяц 15→15):</div><input data-ff="fee" value="${esc(String(f.fee||''))}" inputmode="decimal" placeholder="0">
+      ${finCurPills('currency',f.currency)}
+      <div class="muted">Как платит клиент:</div>
+      <div class="pills" style="flex-wrap:wrap">${FIN_SCHED.map(([k,l])=>`<div class="pill ${f.schedule===k?'active':''}" data-ffpill="schedule:${k}">${l}</div>`).join('')}</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:6px"><input type="checkbox" data-ff="active" ${f.active?'checked':''}> Клиент активен (ставить ожидаемые оплаты)</label>
+      <div class="muted" style="font-size:11px;margin-top:6px">Изменения применяются к текущему циклу, если по нему ещё ничего не оплачено, и ко всем следующим. Уже полученные деньги не трогаются.</div>
+      <button class="btn full" data-finsave>💾 Сохранить</button></div>`;
+  }
+  if(f.mode==='rule'){
+    const piece=['shoot','edit','graphic'].includes(f.kind);
+    return `<div class="card"><div class="row"><h3>${f.id?'Изменить':'Новое'} правило · ${esc(finPersonName(f.member_id))}</h3>${back}</div>
+      <div class="muted">Тип оплаты:</div>
+      <div class="pills" style="flex-wrap:wrap">${FIN_RULE_KINDS.map(([k,l])=>`<div class="pill ${f.kind===k?'active':''}" data-ffpill="kind:${k}">${l}</div>`).join('')}</div>
+      ${f.kind==='salary'?`<div class="muted">Должность:</div><input data-ff="title" value="${esc(f.title||'')}" placeholder="напр. Проджект-менеджер">`:''}
+      ${f.kind!=='salary'?`<div class="muted">Проект:</div>${finSelect('project_id',piece?[["","Все проекты"],...finProjOpts(false)]:finProjOpts(false),f.project_id)}`:''}
+      <div class="muted" style="margin-top:6px">${f.kind==='salary'||f.kind==='project_fixed'?'Сумма за цикл:':'Ставка за единицу:'}</div>
+      <input data-ff="amount" value="${esc(String(f.amount||''))}" inputmode="decimal" placeholder="0">
+      ${finCurPills('currency',f.currency)}
+      <button class="btn full" data-finsave>💾 Сохранить</button></div>`;
+  }
+  // запись журнала: доход / расход / начисление / выплата
+  const k=f.kind;
+  const auto=!!f.ref;
+  const cats=(FIN_CAT[k]||[]).filter(([c])=>auto||!['salary','project_fixed','shoot','edit','graphic'].includes(c)||k==='payout');
+  const catHtml=k==='payout'?'':auto?`<div class="muted">Тип: <b>${esc(finCatLabel(k,f.category))}</b> <span class="badge">авто</span></div>`
+    :`<div class="muted">Тип:</div><div class="pills" style="flex-wrap:wrap">${cats.map(([c,l])=>`<div class="pill ${f.category===c?'active':''}" data-ffpill="category:${c}">${l}</div>`).join('')}</div>`;
+  const who=(k==='accrual'||k==='payout')?`<div class="muted">Сотрудник:</div>${finSelect('member_id',[["","выбрать…"],...(FIN.people||[]).map(p=>[p.id,p.name])],f.member_id||'')}`:'';
+  const proj=k==='payout'?'':`<div class="muted" style="margin-top:6px">Проект:</div>${finSelect('project_id',finProjOpts(true),f.project_id==null?'':f.project_id)}`;
+  const statusHtml=k==='income'?`<div class="pills">${[["done","✅ Получено"],["planned","⏳ Ожидается"]].map(([s,l])=>`<div class="pill ${f.status===s?'active':''}" data-ffpill="status:${s}">${l}</div>`).join('')}</div>`:'';
+  const dateHtml=k==='income'&&f.status==='planned'
+    ? `<div class="muted">Ожидается до:</div><input type="date" data-ff="due_on" value="${esc(f.due_on||'')}">`
+    : `<div class="muted">Дата ${k==='expense'?'расхода':k==='payout'?'выплаты':k==='income'?'оплаты':''}:</div><input type="date" data-ff="paid_on" value="${esc(f.paid_on||finToday())}">`;
+  const cycHtml=(k==='income'||k==='accrual')?`<div class="muted" style="margin-top:6px">За какой цикл:</div>${finSelect('cycle',finCycleOpts(),f.cycle)}`:'';
+  return `<div class="card"><div class="row"><h3>${f.id?'':'Новый: '}${FIN_KIND_TITLE[k]}</h3>${back}</div>
+    ${statusHtml}${catHtml}${who}${proj}
+    <div class="muted" style="margin-top:6px">Сумма${f.category==='deduction'?' вычета':''}:</div><input data-ff="amount" value="${esc(String(f.amount===''||f.amount==null?'':Math.abs(f.amount)))}" inputmode="decimal" placeholder="0">
+    ${finCurPills('currency',f.currency)}
+    ${k==='accrual'?'':dateHtml}${cycHtml}
+    <div class="muted" style="margin-top:6px">Комментарий:</div><input data-ff="note" value="${esc(f.note||'')}" placeholder="${k==='payout'?'напр. аванс за октябрь':k==='expense'?'напр. аренда студии':''}">
+    <button class="btn full" data-finsave style="margin-top:10px">💾 Сохранить</button>
+    ${f.id?`<button class="btn sm sec full" data-findel style="margin-top:6px">🗑 Удалить</button>`:''}
+  </div>`;
+}
+
+function finOpenEntry(id){
+  const all=[...(FIN.entries||[]),...(FIN.openIncome||[]),...(FIN.unassigned||[])];
+  const e=all.find(x=>x.id==id); if(!e) return;
+  FIN_FORM={mode:'entry',...e};
+  render();
+}
+function finNewEntry(kind,memberId,cat){
+  const def={income:'fee',expense:'other',accrual:'bonus',payout:'salary'}[kind];
+  FIN_FORM={mode:'entry',kind,category:cat||def,project_id:null,member_id:memberId||'',cycle:FIN.cycle,amount:'',
+    currency:kind==='income'?'USD':'UZS',status:'done',due_on:'',paid_on:finToday(),note:''};
+  render();
+}
+async function finSave(){
+  finCapture();
+  const f=FIN_FORM;
+  let ok=false;
+  if(f.mode==='rate') ok=await finAct({type:'fin_set_rate',rate:f.rate});
+  else if(f.mode==='pay') ok=await finAct({type:'fin_income_pay',id:f.id,amount:f.amount,currency:f.currency,paid_on:f.paid_on,note:f.note});
+  else if(f.mode==='terms') ok=await finAct({type:'fin_terms_save',projectId:f.projectId,fields:{fee:f.fee,currency:f.currency,schedule:f.schedule,active:!!f.active}});
+  else if(f.mode==='rule') ok=await finAct({type:'fin_rule_save',id:f.id||null,fields:{member_id:f.member_id,kind:f.kind,project_id:f.project_id||null,amount:f.amount,currency:f.currency,title:f.title||''}});
+  else ok=await finAct({type:'fin_entry_save',id:f.id||null,fields:{kind:f.kind,category:f.category,project_id:f.project_id||null,member_id:f.member_id||null,
+    cycle:f.cycle,amount:f.amount,currency:f.currency,status:f.status,due_on:f.due_on,paid_on:f.paid_on,note:f.note}});
+  if(ok){ FIN_FORM=null; render(); }
+}
+function finBind(){
+  if(TAB!=='finance') return;
+  const q=(s)=>document.querySelectorAll(s);
+  const one=(s)=>document.querySelector(s);
+  const rl=one('[data-finreload]'); if(rl) rl.onclick=()=>{FIN_ERR=null;finLoad();};
+  q('[data-fincur]').forEach(b=>b.onclick=()=>{FIN_CUR=b.dataset.fincur;try{localStorage.setItem('umc_fin_cur',FIN_CUR);}catch(e){}render();});
+  q('[data-fincyc]').forEach(b=>b.onclick=()=>{FIN_CYCLE=finShift(FIN.cycle,+b.dataset.fincyc);finLoad();});
+  q('[data-finsec]').forEach(b=>b.onclick=()=>{FIN_SEC=b.dataset.finsec;render();});
+  const rate=one('[data-finrate]'); if(rate) rate.onclick=()=>{FIN_FORM={mode:'rate',rate:FIN.rate&&FIN.rate.rate||''};render();};
+  const rc=one('[data-finrateclear]'); if(rc) rc.onclick=()=>busyClick(rc,async()=>{ if(await finAct({type:'fin_set_rate',rate:0})){FIN_FORM=null;render();} });
+  q('[data-finopen]').forEach(b=>b.onclick=(ev)=>{ if(ev.target.closest('[data-finpay]')) return; finOpenEntry(+b.dataset.finopen); });
+  q('[data-finpay]').forEach(b=>b.onclick=()=>{
+    const e=(FIN.openIncome||[]).find(x=>x.id==b.dataset.finpay); if(!e) return;
+    FIN_FORM={mode:'pay',id:e.id,project_id:e.project_id,expected:e.amount,expCur:e.currency,amount:e.amount,currency:e.currency,paid_on:finToday(),note:''};
+    render();
+  });
+  q('[data-finnew]').forEach(b=>b.onclick=()=>finNewEntry(b.dataset.finnew,b.dataset.finwho?+b.dataset.finwho:'',b.dataset.fincat));
+  q('[data-finterms]').forEach(b=>b.onclick=()=>{
+    const pid=+b.dataset.finterms, t=(FIN.terms||[]).find(x=>x.project_id===pid);
+    FIN_FORM={mode:'terms',projectId:pid,fee:t?t.fee:'',currency:t?t.currency:'USD',schedule:t?t.schedule:'prepay',active:t?t.active:true};
+    render();
+  });
+  q('[data-finperson]').forEach(b=>b.onclick=()=>{FIN_PERSON=+b.dataset.finperson;render();});
+  const bk=one('[data-finback]'); if(bk) bk.onclick=()=>{FIN_PERSON=null;render();};
+  q('[data-finrule]').forEach(b=>b.onclick=()=>{
+    const r=b.dataset.finrule==='new'?null:(FIN.rules||[]).find(x=>x.id==b.dataset.finrule);
+    FIN_FORM=r?{mode:'rule',...r,project_id:r.project_id==null?'':r.project_id}
+      :{mode:'rule',member_id:FIN_PERSON,kind:'salary',project_id:'',amount:'',currency:'UZS',title:''};
+    render();
+  });
+  q('[data-finruledel]').forEach(b=>b.onclick=()=>{
+    tg.showConfirm?tg.showConfirm('Убрать это правило оплаты? Уже начисленное останется.',async ok=>{ if(ok&&await finAct({type:'fin_rule_delete',id:+b.dataset.finruledel})) render(); })
+      :finAct({type:'fin_rule_delete',id:+b.dataset.finruledel}).then(render);
+  });
+  q('[data-finassign]').forEach(s=>s.onchange=async()=>{ if(!s.value) return; if(await finAct({type:'fin_assign',id:+s.dataset.finassign,memberId:+s.value})) render(); });
+  const cl=one('[data-finclose]'); if(cl) cl.onclick=()=>{FIN_FORM=null;render();};
+  q('[data-ffpill]').forEach(b=>b.onclick=()=>{
+    finCapture();
+    const i=b.dataset.ffpill.indexOf(':');
+    FIN_FORM[b.dataset.ffpill.slice(0,i)]=b.dataset.ffpill.slice(i+1);
+    render();
+  });
+  const sv=one('[data-finsave]'); if(sv) sv.onclick=()=>busyClick(sv,finSave);
+  const dl=one('[data-findel]'); if(dl) dl.onclick=()=>{
+    const go=async()=>{ if(await finAct({type:'fin_entry_delete',id:FIN_FORM.id})){FIN_FORM=null;render();} };
+    tg.showConfirm?tg.showConfirm('Удалить запись?',ok=>{ if(ok) go(); }):go();
+  };
+}
+try{ FIN_CUR=localStorage.getItem('umc_fin_cur')||'USD'; }catch(e){}
+
 function bind(){
   document.querySelectorAll('textarea').forEach(t=>{ autoGrow(t); t.oninput=()=>autoGrow(t); });
   requestAnimationFrame(autoGrowAll);
+  finBind();
   // автосохранение карточки пункта: любое изменение поля ставит отложенное сохранение
   if(TAB==='plan'&&TBL_OPEN!=null){
     ['f_theme','f_reference','f_props','f_location','f_shoot','f_deadline','f_script']
@@ -2198,12 +2609,13 @@ function bind(){
   });
   document.querySelectorAll('[data-subopen]').forEach(b=>b.onclick=()=>{SUB_OPEN=+b.dataset.subopen;SUB_EDIT=null;render();});
   const sbn=document.querySelector('[data-subnew]'); if(sbn) sbn.onclick=()=>{SUB_OPEN='new';SUB_EDIT=null;render();};
+  document.querySelectorAll('[data-subcur]').forEach(b=>b.onclick=()=>{captureSub();SUB_EDIT.currency=b.dataset.subcur;render();});
   const sbc=document.querySelector('[data-subclose]'); if(sbc) sbc.onclick=()=>{SUB_OPEN=null;SUB_EDIT=null;render();};
   const sbs=document.querySelector('[data-subsave]'); if(sbs) sbs.onclick=()=>busyClick(sbs, async()=>{
     captureSub();
     if(!SUB_EDIT.app.trim()){tg.showAlert&&tg.showAlert('Впиши название подписки');return;}
     const isNew=SUB_OPEN==='new';
-    const fields={app:SUB_EDIT.app,period_days:SUB_EDIT.period_days,purchased_on:SUB_EDIT.purchased_on,expires_on:SUB_EDIT.expires_on};
+    const fields={app:SUB_EDIT.app,period_days:SUB_EDIT.period_days,purchased_on:SUB_EDIT.purchased_on,expires_on:SUB_EDIT.expires_on,price:SUB_EDIT.price,currency:SUB_EDIT.currency};
     const res=await api('POST',isNew?{type:'sub_add',fields}:{type:'sub_update',id:SUB_EDIT.id,fields});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
     if(res&&res.projects){DATA=res;buildTabs();}

@@ -5,6 +5,7 @@ import { bot, safeSend } from "./bot";
 import { buildReport, buildTeamMorning, buildTeamEvening } from "./views";
 import { metaConfigured, pullSnapshot } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
+import * as fin from "./finance";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
@@ -32,8 +33,17 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
     try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
   }
 
+  // финансы: ожидаемые оплаты клиентов и оклады/фикс нового цикла. Это данные, а не
+  // сообщения, поэтому тоже до выключателя уведомлений
+  if (hour >= 6 && (await d2.claimMarker("fin_sync", day))) {
+    try { await fin.ensureCycle(); } catch { /* миграция финансов ещё не выполнена */ }
+  }
+
   // общий выключатель — касается только исходящих сообщений, не сбора данных выше
   if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
+
+  // оплаты клиентов, срок которых наступил или прошёл — админам, раз в день
+  if (hour === 9 && (await d2.claimMarker("fin_due", day))) sent += await clientPaymentReminders(day);
 
   sent += await deadlineReminders(now);
   sent += await subscriptionReminders(day);
@@ -96,6 +106,19 @@ async function deadlineReminders(now: number): Promise<number> {
 }
 
 // ---------- подписки ----------
+async function clientPaymentReminders(today: string): Promise<number> {
+  const due = await fin.dueClientPayments(today);
+  if (!due.length) return 0;
+  const fmt = (n: number, c: string) => (c === "USD" ? "$" : "") + Math.round(n).toLocaleString("ru-RU") + (c === "USD" ? "" : " сум");
+  const lines = due.map((d) => `• ${d.project}: ${fmt(d.amount, d.currency)} — ${d.overdue ? "⚠️ просрочено с " + d.due_on.split("-").reverse().join(".") : "сегодня"}`);
+  const text = `💰 Ожидаются оплаты от клиентов:\n\n${lines.join("\n")}\n\nОтметить получение: приложение → Финансы → Доходы.`;
+  const ids = new Set<number>(ENV_ADMINS);
+  (await db.listAdmins()).forEach((a) => ids.add(a.telegram_id));
+  let sent = 0;
+  for (const id of ids) { await safeSend(id, text); sent++; }
+  return sent;
+}
+
 async function subscriptionReminders(today: string): Promise<number> {
   const subs = await d2.listSubscriptions();
   let sent = 0;
