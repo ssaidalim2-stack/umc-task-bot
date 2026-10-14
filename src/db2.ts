@@ -72,6 +72,16 @@ export async function createPlan(projectId: number, period: string): Promise<num
   const { data } = await supabase.from("content_plans").insert({ project_id: projectId, period, is_active: false, video_target: 0, graphic_target: 0 }).select("id").single();
   return data?.id ?? null;
 }
+// период, по которому считается прогресс проекта: активный, а если активного нет — самый новый
+// (иначе проект с периодами, но без «•», показывал на дашборде нули)
+export function currentPlanByProject(plans: ContentPlan[]): Map<number, ContentPlan> {
+  const out = new Map<number, ContentPlan>();
+  for (const pl of plans) {
+    const cur = out.get(pl.project_id);
+    if (!cur || (pl.is_active && !cur.is_active) || (pl.is_active === cur.is_active && pl.id > cur.id)) out.set(pl.project_id, pl);
+  }
+  return out;
+}
 export async function setPlanActive(projectId: number, planId: number): Promise<void> {
   await supabase.from("content_plans").update({ is_active: false }).eq("project_id", projectId);
   await supabase.from("content_plans").update({ is_active: true }).eq("id", planId);
@@ -92,9 +102,18 @@ export async function addContentItems(planId: number, projectId: number, specs: 
 export async function deleteContentItem(id: number): Promise<void> {
   await supabase.from("content_items").delete().eq("id", id);
 }
+// Supabase отдаёт не больше 1000 строк за запрос: без постраничной выборки пункты сверх
+// лимита (а их копят все периоды и сторис) молча пропадали из статистики и календаря
 export async function getAllItems(): Promise<ContentItem[]> {
-  const { data } = await supabase.from("content_items").select("*").order("idx");
-  return (data as ContentItem[]) ?? [];
+  const PAGE = 1000;
+  const out: ContentItem[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await supabase.from("content_items").select("*").order("idx").order("id").range(from, from + PAGE - 1);
+    const rows = (data as ContentItem[]) ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
 }
 export async function getActivePlan(projectId: number): Promise<ContentPlan | null> {
   const { data } = await supabase.from("content_plans").select("*").eq("project_id", projectId).eq("is_active", true).maybeSingle();

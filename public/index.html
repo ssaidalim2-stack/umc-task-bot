@@ -193,6 +193,11 @@
     .fcols{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
     .fcols>.wide{grid-column:1/-1}
   }
+  /* дашборд: карточки в две колонки, порядок сверху вниз как на телефоне */
+  @media (min-width:900px){
+    .dash{column-count:2;column-gap:16px}
+    .dash>.card{break-inside:avoid;display:inline-block;width:100%;margin:0 0 12px}
+  }
   /* финансы: на широком экране карточки раздела встают в две колонки */
   @media (min-width:720px){
     .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}
@@ -1047,7 +1052,7 @@ function buildTabs(){
   const more=all.filter(t=>!shown.includes(t));
   const btn=t=>`<button data-t="${t}" class="${t===TAB?'active':''}"><span class="ic">${TABMETA[t].ic}</span>${TABMETA[t].t}</button>`;
   el.innerHTML=shown.map(btn).join('')+(useMore?`<button data-more class="${more.includes(TAB)?'active':''}"><span class="ic">☰</span>Ещё</button>`:'');
-  el.querySelectorAll('button[data-t]').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;closeMore();buildTabs();render();});
+  el.querySelectorAll('button[data-t]').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;closeMore();buildTabs();render();if(TAB==='home')silentRefresh();});
   const mb=el.querySelector('[data-more]'); if(mb) mb.onclick=()=>toggleMore(more);
 }
 function closeMore(){ const s=document.getElementById('moreSheet'); if(s) s.remove(); }
@@ -1060,7 +1065,7 @@ function toggleMore(more){
     <div class="mgrid">${DATA.tabs.map(t=>`<div class="mcell ${t===TAB?'active':''}" data-mt="${t}"><span>${TABMETA[t].ic}</span>${TABMETA[t].t}</div>`).join('')}</div></div>`;
   document.body.appendChild(s);
   s.querySelector('.msheet-bg').onclick=closeMore;
-  s.querySelectorAll('[data-mt]').forEach(c=>c.onclick=()=>{TAB=c.dataset.mt;closeMore();buildTabs();render();});
+  s.querySelectorAll('[data-mt]').forEach(c=>c.onclick=()=>{TAB=c.dataset.mt;closeMore();buildTabs();render();if(TAB==='home')silentRefresh();});
 }
 
 function render(){
@@ -1083,7 +1088,7 @@ function renderTable(){
   const p=projects.find(x=>x.id==TBL_PROJ);
   if(!p) return '<div class="empty">Нет проектов</div>';
   const plans=p.plans||[];
-  if(!TBL_PLAN || !plans.some(pl=>pl.id==TBL_PLAN)) TBL_PLAN=(plans.find(pl=>pl.is_active)||plans[0])?.id||null;
+  if(!TBL_PLAN || !plans.some(pl=>pl.id==TBL_PLAN)) TBL_PLAN=(plans.find(pl=>pl.is_active)||plans[plans.length-1])?.id||null;
   // ленивая подгрузка пунктов при смене периода (и сброс, если у проекта вообще нет периода — иначе виснут пункты чужого проекта)
   if(TBL_LOADED!==TBL_PLAN){
     TBL_LOADED=TBL_PLAN; TBL_ITEMS=TBL_PLAN?null:[];
@@ -1278,7 +1283,8 @@ function urgencyInfo(deadlineIso){
 }
 function renderHome(){
   const u=DATA.user, st=DATA.stats;
-  let h=`<div class="card"><h3>👋 Привет, ${esc(u.name||'')}</h3><div class="muted">${roleLabel(u.role)}${DATA.period?' · '+esc(DATA.period):''}</div></div>`;
+  const head=`<div class="card"><h3>👋 Привет, ${esc(u.name||'')}</h3><div class="muted">${roleLabel(u.role)}${DATA.period?' · '+esc(DATA.period):''}</div></div>`;
+  let h='';
 
   const urgent=(DATA.myTasks||[]).map(t=>({...t,u:urgencyInfo(t.deadline)})).filter(t=>t.u).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline));
   if(urgent.length){
@@ -1318,6 +1324,7 @@ function renderHome(){
     h+='</div>';
   }
 
+  let tail='';
   if(st){
     const T=st.totals;
     h+=`<div class="card"><h3>📈 Прогресс по контент-плану</h3>
@@ -1329,14 +1336,16 @@ function renderHome(){
     </div>`;
     h+=`<div class="card"><h3>🌐 Языки видео</h3>
       <div class="muted">🇷🇺 Рус: <b>${T.langs.ru}</b> · 🇺🇿 Узб: <b>${T.langs.uz}</b> · 🇬🇧 Англ: <b>${T.langs.en}</b> · не указан: ${T.langs.none}</div></div>`;
-    h+=`<div class="card" style="overflow-x:auto"><h3>По проектам</h3>
+    tail=`<div class="card" style="overflow-x:auto"><h3>По проектам</h3>
       <table class="ctab">
         <tr><th>Проект</th><th>📝</th><th>🎥</th><th>✂️</th><th>✅</th><th>🖼</th><th>РУС</th><th>УЗБ</th><th>ENG</th></tr>
-        ${st.projects.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.scripts}/${p.videoTotal}</td><td>${p.shot}</td><td>${p.edited}</td><td>${p.published}</td><td>${p.graphicDone}/${p.graphicTotal}</td><td>${p.langs.ru}</td><td>${p.langs.uz}</td><td>${p.langs.en}</td></tr>`).join('')}
+        ${st.projects.map(p=>`<tr><td><b>${esc(p.name)}</b>${p.period?`<div class="muted" style="font-size:11px;font-weight:500">${esc(p.period)}${p.periodActive?'':' · не отмечен активным'}</div>`:''}</td><td>${p.scripts}/${p.videoTotal}</td><td>${p.shot}</td><td>${p.edited}</td><td>${p.published}</td><td>${p.graphicDone}/${p.graphicTotal}</td><td>${p.langs.ru}</td><td>${p.langs.uz}</td><td>${p.langs.en}</td></tr>`).join('')}
       </table>
-      <div class="muted" style="margin-top:6px">📝сценарии · 🎥снято · ✂️смонтировано · ✅опубликовано · 🖼графика</div></div>`;
+      <div class="muted" style="margin-top:6px">📝сценарии · 🎥снято · ✂️смонтировано · ✅опубликовано · 🖼графика. Под названием — период, по которому считается прогресс: активный («•» в Таблице), а если активного нет — самый новый.</div></div>`;
   }
-  return h;
+  // на широком экране карточки идут в две колонки (порядок на телефоне прежний),
+  // таблица по проектам — во всю ширину под ними
+  return head+`<div class="dash">${h}</div>`+tail;
 }
 
 function renderBoard(){
