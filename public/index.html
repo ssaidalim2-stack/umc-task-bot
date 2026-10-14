@@ -175,6 +175,24 @@
   @media (min-width:1500px){
     header,.wrap{max-width:1360px}
   }
+  /* карточки с большим количеством полей (пункт плана, сторис, ТЗ, umc, продажи):
+     на широком экране основной текст уходит в левую колонку, параметры — в правую,
+     чтобы всё помещалось на один экран. На телефоне порядок полей прежний. */
+  @media (min-width:900px){
+    .split{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(320px,1fr);grid-template-rows:auto 1fr auto;
+      grid-template-areas:"main meta" "main extra" "wide wide";gap:0 24px;align-items:start}
+    .sp-main{grid-area:main} .sp-meta{grid-area:meta} .sp-extra{grid-area:extra} .sp-wide{grid-area:wide}
+    /* !important — у полей есть inline min-height под телефон */
+    .sp-main textarea{min-height:300px!important}
+    .sp-main .frame textarea{min-height:60px!important}
+    .sp-meta .pills,.sp-extra .pills{flex-wrap:wrap;gap:6px;padding:2px 0 6px}
+    .sp-meta .pill,.sp-extra .pill{padding:5px 11px;font-size:12px}
+    .sp-extra textarea{min-height:44px!important}
+  }
+  @media (min-width:720px){
+    .fcols{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
+    .fcols>.wide{grid-column:1/-1}
+  }
   /* финансы: на широком экране карточки раздела встают в две колонки */
   @media (min-width:720px){
     .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}
@@ -1203,13 +1221,19 @@ function renderItemDetail(){
     <div class="row"><h3>Пункт #${it.idx}</h3><div style="display:flex;gap:6px">${lockBtn}<button class="btn sm sec" data-tclose>← назад</button></div></div>
     ${lockNotice}${authorNotice}
     ${canEdit()&&!lockedForMe?`<div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px"><span id="saveHint" class="muted" style="font-size:12px">✓ сохранено</span><button class="btn xs sec" data-undo ${UNDO.length?'':'disabled'} style="flex:0 0 auto">↩️ Отменить</button></div>`:''}
+    <div class="split">
+    <div class="sp-meta">
     <div class="muted">№ позиция (перенести на другой номер):</div><input id="f_pos" value="${it.idx}" inputmode="numeric" style="max-width:130px" ${ro}>
-    <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="muted">Тип:</div><div class="pills">${typePills}</div>
     <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${it.lang==k?'active':''}" data-tlang="${k}">${l}</div>`).join('')}</div>
     <div class="muted">Формат:</div><div class="pills">${FORMAT_OPTS.map(([k,l])=>`<div class="pill ${it.format==k?'active':''}" data-tformat="${k}">${l}</div>`).join('')}</div>
+    </div>
+    <div class="sp-main">
+    <div class="muted">Тема / заголовок:</div><input id="f_theme" value="${esc(it.theme||'')}" placeholder="о чём видео" ${ro}>
     <div class="row"><div class="muted">${scriptLabel}:</div><button class="xbtn" data-copyscript>📋 Копировать</button></div>
     ${it.type==='video'?renderFrames(it):`<textarea id="f_script" ${ro}>${esc(it.script)}</textarea>`}
+    </div>
+    <div class="sp-extra">
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
     <div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
     <div class="muted">Локация съёмки:</div><input id="f_location" value="${esc(it.location||'')}" placeholder="где снимаем" ${ro}>
@@ -1218,9 +1242,11 @@ function renderItemDetail(){
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()&&!lockedForMe?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить и закрыть</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
-    ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 ${it.ai_tz?'Пересоздать':'Сгенерировать'} раскадровку монтажа (AI)</button>
-    ${renderAiTzBlock(it)}`:''}
-    <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:(it.type==='video'?renderAiTzBlock(it):'')}
+    ${it.type==='video'?`<button class="btn full sec" data-airaska="${it.id}" style="margin-top:6px">🤖 ${it.ai_tz?'Пересоздать':'Сгенерировать'} раскадровку монтажа (AI)</button>`:''}
+    <button class="btn sm sec full" data-tdel="${it.id}" style="margin-top:6px">🗑 Удалить пункт</button>`:''}
+    </div>
+    ${it.type==='video'?`<div class="sp-wide">${renderAiTzBlock(it)}</div>`:''}
+    </div>
   </div>`;
 }
 
@@ -1632,14 +1658,14 @@ function renderTZ(){
     ? specs.map(s=>`<div class="pill ${s.id==TZ_EXEC?'active':''}" data-exec="${s.id}">${esc(s.name)}</div>`).join('')
     : '<div class="muted" style="font-size:12px">Нет сотрудника с этой ролью — назначь роль во вкладке «Команда».</div>';
   const projPills=`<div class="pill ${TZ_PROJ===''?'active':''}" data-tzp="">Общее</div>`+DATA.projects.map(p=>`<div class="pill ${TZ_PROJ==p.id?'active':''}" data-tzp="${p.id}">${esc(p.name)}</div>`).join('');
-  const fields=(TZ_TEMPLATES[TZ_SEC]||[]).map(([id,label,big])=>{
+  const fieldsHtml=(TZ_TEMPLATES[TZ_SEC]||[]).map(([id,label,big])=>{
     const v=TZ_FIELDS[id]||'';
     if(id==='deadline') return `<div class="muted">${label}:</div>${pickerPair('tz_'+id,v,'ДД.ММ или ДД.ММ ЧЧ:ММ',true,'')}`;
     if(id==='shoot') return `<div class="muted">${label}:</div>${pickerPair('tz_'+id,v,'ДД.ММ',false,'')}`;
     return big
       ? `<div class="muted">${label}:</div><textarea id="tz_${id}" style="min-height:60px">${esc(v)}</textarea>`
       : `<div class="muted">${label}:</div><input id="tz_${id}" value="${esc(v)}">`;
-  }).join('');
+  });
   let itemPicker='';
   if(TZ_SEC==='video' && TZ_PROJ){
     if(TZ_ITEMS_FOR!==TZ_PROJ){ TZ_ITEMS=null; TZ_ITEMS_FOR=TZ_PROJ; api('POST',{type:'plan_active_items',projectId:TZ_PROJ}).then(r=>{TZ_ITEMS=(r&&r.items)||[]; render();}); }
@@ -1651,15 +1677,23 @@ function renderTZ(){
   const photoBlock=TZ_PHOTO
     ? `<div class="row" style="gap:8px;align-items:center;margin:6px 0"><img src="${TZ_PHOTO}" style="max-height:90px;border-radius:8px"><button class="xbtn" data-tzphoto-clear>✕ убрать фото</button></div>`
     : `<div class="muted">Фото (необязательно):</div><input type="file" id="tzPhoto" accept="image/*">`;
+  // первое поле шаблона — главный текст ТЗ (идея / сценарий / текст): на широком экране он слева
   return `<div class="card"><h3>✍️ Дать ТЗ</h3>
+    <div class="split">
+    <div class="sp-meta">
     <div class="muted">Раздел:</div><div class="pills">${secPills}</div>
     <div class="muted">Исполнитель:</div><div class="pills">${execPills}</div>
     <div class="muted">Проект:</div><div class="pills">${projPills}</div>
     ${itemPicker}
-    <div style="border-top:1px solid rgba(127,127,127,.2);margin:8px 0;padding-top:6px">${fields}</div>
+    </div>
+    <div class="sp-main" style="border-top:1px solid rgba(127,127,127,.2);margin:8px 0;padding-top:6px">${fieldsHtml[0]||''}</div>
+    <div class="sp-extra">
+    ${fieldsHtml.slice(1).join('')}
     ${photoBlock}
     <button class="btn full" data-tz-send>📨 Отправить ТЗ</button>
-    <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div></div>`;
+    <div class="muted" style="margin-top:8px">Заполни нужные поля — ТЗ уйдёт исполнителю в личку и в привязанную группу.</div>
+    </div>
+    </div></div>`;
 }
 
 const ROLE_OPTS_TEAM=[["manager","Менеджер"],["pm","Проджект-менеджер"],["videographer","Видеограф"],["editor","Монтажёр"],["designer","Дизайнер"],["sales","Отдел продаж"]];
@@ -1778,13 +1812,15 @@ function renderSalesDetail(){
   const statusPills=SALES_STATUS_OPTS.map(([k,l])=>`<div class="pill ${e.status==k?'active':''}" data-salesstatus="${k}">${l}</div>`).join('');
   return `<div class="card">
     <div class="row"><h3>${isNew?'Новый контакт':'Контакт #'+e.id}</h3><button class="btn sm sec" data-salesclose>← назад</button></div>
-    <div class="muted">Имя:</div><input id="sf_name" value="${esc(e.name)}">
-    <div class="muted">Ниша:</div><input id="sf_niche" value="${esc(e.niche)}">
-    <div class="muted">Инстаграм:</div><input id="sf_instagram" value="${esc(e.instagram)}" placeholder="@username">
-    <div class="muted">Номер для связи:</div><input id="sf_phone" value="${esc(e.phone)}">
-    <div class="muted">Когда был звонок:</div>${pickerPair('sf_called',e.called_at,'ДД.ММ или как удобно',false,'')}
-    <div class="muted">Какой ответ:</div><textarea id="sf_response" style="min-height:70px">${esc(e.response)}</textarea>
-    <div class="muted" style="margin-top:6px">Статус:</div><div class="pills">${statusPills}</div>
+    <div class="fcols">
+    <div><div class="muted">Имя:</div><input id="sf_name" value="${esc(e.name)}"></div>
+    <div><div class="muted">Ниша:</div><input id="sf_niche" value="${esc(e.niche)}"></div>
+    <div><div class="muted">Инстаграм:</div><input id="sf_instagram" value="${esc(e.instagram)}" placeholder="@username"></div>
+    <div><div class="muted">Номер для связи:</div><input id="sf_phone" value="${esc(e.phone)}"></div>
+    <div><div class="muted">Когда был звонок:</div>${pickerPair('sf_called',e.called_at,'ДД.ММ или как удобно',false,'')}</div>
+    <div class="wide"><div class="muted">Какой ответ:</div><textarea id="sf_response" style="min-height:70px">${esc(e.response)}</textarea></div>
+    <div class="wide"><div class="muted" style="margin-top:6px">Статус:</div><div class="pills" style="flex-wrap:wrap">${statusPills}</div></div>
+    </div>
     ${!isNew?`<div class="muted" style="font-size:12px;margin-top:8px">Добавил: ${esc(e.added_by_name||'—')}</div>`:''}
     <button class="btn full" data-salessave style="margin-top:10px">💾 Сохранить</button>
     ${!isNew?'<button class="btn sm sec full" data-salesdel style="margin-top:6px">🗑 Удалить</button>':''}
@@ -1951,17 +1987,18 @@ function renderUmcDetail(){
   const isBlogger=e.kind==='blogger', isBusiness=e.kind==='business';
   return `<div class="card">
     <div class="row"><h3>${isNew?'Новая запись':umcKindLabel(e.kind)+' #'+e.id}</h3><button class="btn sm sec" data-umcclose>← назад</button></div>
-    <div class="muted">Раздел на сайте:</div><div class="pills">${UMC_KINDS.map(([k,l])=>`<div class="pill ${e.kind===k?'active':''}" data-umcekind="${k}">${l}</div>`).join('')}</div>
-    <div class="muted">${isBusiness?'Название компании:':'Имя:'}</div><input id="uf_name" value="${esc(e.name)}">
-    <div class="muted">${isBusiness?'Сфера / ниша:':'Категория (как на сайте):'}</div><input id="uf_category" value="${esc(e.category)}" placeholder="${isBlogger?'напр. Blogers, Marketing':isBusiness?'напр. Education':'напр. Design, Photo &amp; Video'}">
-    <div class="muted">Инстаграм:</div><input id="uf_instagram" value="${esc(e.instagram)}" placeholder="@username">
-    ${isBlogger?`<div class="muted">Подписчики:</div><input id="uf_followers" value="${esc(e.followers)}" placeholder="напр. 67 938">`:''}
-    <div class="muted">Телефон:</div><input id="uf_phone" value="${esc(e.phone)}">
-    <div class="muted">Email:</div><input id="uf_email" value="${esc(e.email)}">
-    <div class="muted">${isBlogger?'Локация / аудитория:':'Город:'}</div><input id="uf_city" value="${esc(e.city)}">
-    <div class="muted">Комментарий:</div><textarea id="uf_note" style="min-height:70px">${esc(e.note)}</textarea>
-    <div class="muted">Ссылка на профиль на umc.uz:</div><input id="uf_profile_url" value="${esc(e.profile_url)}" placeholder="https://umc.uz/ru/bloggers/…">
-    <div class="muted" style="margin-top:6px">Этап:</div><div class="pills">${UMC_STATUS.map(([k,l])=>`<div class="pill ${e.status===k?'active':''}" data-umcstatus="${k}">${l}</div>`).join('')}</div>
+    <div class="fcols"><div class="wide"><div class="muted">Раздел на сайте:</div><div class="pills">${UMC_KINDS.map(([k,l])=>`<div class="pill ${e.kind===k?'active':''}" data-umcekind="${k}">${l}</div>`).join('')}</div></div>
+    <div><div class="muted">${isBusiness?'Название компании:':'Имя:'}</div><input id="uf_name" value="${esc(e.name)}"></div>
+    <div><div class="muted">${isBusiness?'Сфера / ниша:':'Категория (как на сайте):'}</div><input id="uf_category" value="${esc(e.category)}" placeholder="${isBlogger?'напр. Blogers, Marketing':isBusiness?'напр. Education':'напр. Design, Photo &amp; Video'}"></div>
+    <div><div class="muted">Инстаграм:</div><input id="uf_instagram" value="${esc(e.instagram)}" placeholder="@username"></div>
+    ${isBlogger?`<div><div class="muted">Подписчики:</div><input id="uf_followers" value="${esc(e.followers)}" placeholder="напр. 67 938"></div>`:''}
+    <div><div class="muted">Телефон:</div><input id="uf_phone" value="${esc(e.phone)}"></div>
+    <div><div class="muted">Email:</div><input id="uf_email" value="${esc(e.email)}"></div>
+    <div><div class="muted">${isBlogger?'Локация / аудитория:':'Город:'}</div><input id="uf_city" value="${esc(e.city)}"></div>
+    <div class="wide"><div class="muted">Комментарий:</div><textarea id="uf_note" style="min-height:70px">${esc(e.note)}</textarea></div>
+    <div><div class="muted">Ссылка на профиль на umc.uz:</div><input id="uf_profile_url" value="${esc(e.profile_url)}" placeholder="https://umc.uz/ru/bloggers/…"></div>
+    <div><div class="muted" style="margin-top:6px">Этап:</div><div class="pills" style="flex-wrap:wrap">${UMC_STATUS.map(([k,l])=>`<div class="pill ${e.status===k?'active':''}" data-umcstatus="${k}">${l}</div>`).join('')}</div></div>
+    </div>
     ${!isNew&&e.added_by_name?`<div class="muted" style="font-size:12px;margin-top:8px">Ведёт: ${esc(e.added_by_name)}</div>`:''}
     <button class="btn full" data-umcsave style="margin-top:10px">💾 Сохранить</button>
     ${!isNew&&DATA.user.role==='admin'?'<button class="btn sm sec full" data-umcdel style="margin-top:6px">🗑 Удалить</button>':''}
@@ -2046,15 +2083,21 @@ function renderStoryCard(){
        <div class="muted" style="font-size:11px;margin-top:4px">Бот попросит прислать файл ему в личку и напомнит с ним в день публикации.</div>`;
   return `<div class="card">
     <div class="row"><h3>📱 Сторис${e.day?` · ${d}.${m}`:''}</h3><button class="btn sm sec" data-stclose>← назад</button></div>
+    <div class="split">
+    <div class="sp-meta">
     <div class="muted">Формат:</div><div class="pills">${STORY_MEDIA.map(([k,l])=>`<div class="pill ${e.media===k?'active':''}" data-stmedia="${k}">${l}</div>`).join('')}</div>
     <div class="muted">Язык:</div><div class="pills">${LANG_OPTS.map(([k,l])=>`<div class="pill ${e.lang===k?'active':''}" data-stlang="${k}">${l}</div>`).join('')}</div>
-    <div class="muted">Тема:</div><input id="sf_theme" value="${esc(e.theme)}" placeholder="о чём сторис">
     ${isVid?`<div class="muted">Кто снимает:</div><div class="pills">${
         shooters.length?shooters.map(p=>`<div class="pill ${e.shooter===p.name?'active':''}" data-stshooter="${esc(p.name)}">${esc(p.name)}</div>`).join('')
-        :'<div class="muted" style="font-size:12px">Нет сотрудников в команде</div>'}</div>
-      <div class="muted">Речь / что делать в кадре:</div><textarea id="sf_speech" style="min-height:80px" placeholder="что говорить и что показывать">${esc(e.speech)}</textarea>`:''}
+        :'<div class="muted" style="font-size:12px">Нет сотрудников в команде</div>'}</div>`:''}
+    </div>
+    <div class="sp-main">
+    <div class="muted">Тема:</div><input id="sf_theme" value="${esc(e.theme)}" placeholder="о чём сторис">
+    ${isVid?`<div class="muted">Речь / что делать в кадре:</div><textarea id="sf_speech" style="min-height:80px" placeholder="что говорить и что показывать">${esc(e.speech)}</textarea>`:''}
     ${isGfx?`<div class="muted">Заголовок:</div><input id="sf_title" value="${esc(e.title)}" placeholder="крупный текст">
       <div class="muted">Подзаголовок:</div><input id="sf_subtitle" value="${esc(e.subtitle)}" placeholder="строка помельче">`:''}
+    </div>
+    <div class="sp-extra">
     <div class="muted" style="margin-top:8px">Дедлайн на получение материала:</div>${pickerPair('sf_matdl',e.matDeadline,'ДД.ММ',false,'')}
     <div class="muted" style="margin-top:8px">Материал:</div>
     ${fileBlock}
@@ -2062,6 +2105,8 @@ function renderStoryCard(){
     <div class="muted" style="margin-top:6px">Статус:</div><div class="pills">${STORY_STATUS.map(([k,l])=>`<div class="pill ${e.stage===k?'active':''}" data-ststage="${k}">${l}</div>`).join('')}</div>
     <button class="btn full" data-stsave style="margin-top:10px">💾 Сохранить</button>
     <button class="btn sm sec full" data-stdel style="margin-top:6px">🗑 Удалить</button>
+    </div>
+    </div>
   </div>`;
 }
 // ---- недельный план (Пн–Вс): задачи по сотрудникам на каждый день ----
