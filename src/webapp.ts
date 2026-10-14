@@ -279,11 +279,11 @@ export async function getData(userId: number) {
   const restrictedProjectIds = await calendarRestrictionFor(userId, member, isAdmin);
   const visibleProjects = restrictedProjectIds && restrictedProjectIds.length ? projects.filter((p) => restrictedProjectIds.includes(p.id)) : projects;
 
-  const activePlanByProject = new Map(plans.filter((p) => p.is_active).map((p) => [p.project_id, p]));
+  const activePlanByProject = d2.currentPlanByProject(plans);
   const plansByProject = new Map<number, any[]>();
   for (const pl of plans) { const a = plansByProject.get(pl.project_id) || []; a.push({ id: pl.id, period: pl.period, is_active: pl.is_active }); plansByProject.set(pl.project_id, a); }
   const planByProject = activePlanByProject;
-  const period = plans.find((p) => p.is_active)?.period || plans[0]?.period || "";
+  const period = plans.find((p) => p.is_active)?.period || plans[plans.length - 1]?.period || "";
   const pendingPublish = new Set(openTasks.filter((t) => t.status === "await_confirm" && t.item_id).map((t) => t.item_id));
 
   const activePlanIds = new Set([...activePlanByProject.values()].map((p: any) => p.id));
@@ -351,13 +351,15 @@ export async function getData(userId: number) {
     const langs: any = { ru: 0, uz: 0, en: 0, none: 0 };
     for (const v of videos) {
       const d = parseItemData(v.title);
-      if ((d.script || "").trim()) scripts++;
+      // сценарий готов, если он написан ИЛИ видео уже на этапе «Сценарий готов» и дальше
+      // (снятое видео без текста в карточке — это всё равно видео со сценарием)
+      if ((d.script || "").trim() || ["script", "shoot", "edit", "published"].includes(v.stage)) scripts++;
       const l = (d.lang || "").trim();
       if (LANGS.includes(l)) langs[l]++; else langs.none++;
     }
     const inAny = (sts: string[]) => videos.filter((v) => sts.includes(v.stage)).length;
     return {
-      name: p.name, videoTotal: videos.length, scripts,
+      name: p.name, period: activePlanByProject.get(p.id)?.period || "", periodActive: !!activePlanByProject.get(p.id)?.is_active, videoTotal: videos.length, scripts,
       shot: inAny(["shoot", "edit", "published"]),
       edited: inAny(["edit", "published"]),
       published: inAny(["published"]),
@@ -1139,6 +1141,8 @@ export async function doAction(userId: number, action: any) {
     case "plan_create": {
       if (role !== "admin" && role !== "manager") break;
       const planId = await d2.createPlan(+action.projectId, (action.period || "Новый период").trim());
+      // первый период проекта сразу делаем активным — иначе он не попадает в прогресс и отчёты
+      if (planId && !(await d2.getActivePlan(+action.projectId))) await d2.setPlanActive(+action.projectId, planId);
       if (planId) {
         const v = Math.max(0, Math.min(200, +action.videos || 0));
         const g = Math.max(0, Math.min(200, +action.graphics || 0));
