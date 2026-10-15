@@ -2,11 +2,106 @@
 // База правил: docs/tz-algorithm.md (раздел 8 — системный промпт).
 // Требует env: GEMINI_API_KEY (бесплатный тир — Google AI Studio).
 
+import { getSetting, setSetting } from "./db2";
+
 const API_KEY = process.env.GEMINI_API_KEY || "";
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const BASE = "https://generativelanguage.googleapis.com/v1beta";
+// Модель из env, иначе последняя рабочая (запоминается сама), иначе дефолт.
+// Google регулярно снимает модели с поддержки — 2.5-flash так уже однажды молча
+// сломала раскраскадровку, поэтому при «модель не найдена» бот сам выбирает новую.
+const DEFAULT_MODEL = "gemini-3.6-flash";
+const ENV_MODEL = (process.env.GEMINI_MODEL || "").trim();
+// Vercel рвёт функцию по своему лимиту — лучше упасть раньше с понятной ошибкой
+const TIMEOUT_MS = 50000;
 
 export function aiConfigured(): boolean { return !!API_KEY; }
+
+// замена запоминается вместе с тем, что заменяли: если на Vercel поменяют GEMINI_MODEL,
+// старая автозамена перестанет действовать и будет взята новая модель из env
+async function currentModel(): Promise<string> {
+  const base = ENV_MODEL || DEFAULT_MODEL;
+  try {
+    const sw = JSON.parse((await getSetting("gemini_model")) || "null");
+    if (sw && sw.from === base && sw.to) return sw.to;
+  } catch {}
+  return base;
+}
+
+// выбрать самую свежую «flash»-модель, которая умеет generateContent
+export async function pickModel(): Promise<string | null> {
+  const res = await fetch(`${BASE}/models?key=${API_KEY}&pageSize=200`);
+  const j: any = await res.json().catch(() => ({}));
+  if (j.error) throw new Error(humanError(j.error));
+  const names: string[] = (j.models || [])
+    .filter((m: any) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m: any) => String(m.name || "").replace(/^models\//, ""))
+    .filter((n: string) => /^gemini-[\d.]+-flash$|^gemini-[\d.]+-flash-latest$|^gemini-flash-latest$/.test(n));
+  if (!names.length) return null;
+  const ver = (n: string) => parseFloat((n.match(/gemini-([\d.]+)/) || [])[1] || "0");
+  names.sort((a, b) => ver(b) - ver(a) || a.length - b.length);
+  return names[0];
+}
+
+// ошибки Gemini — понятным языком, с подсказкой, что делать
+function humanError(e: any): string {
+  const code = e?.code, status = String(e?.status || ""), msg = String(e?.message || JSON.stringify(e));
+  if (code === 429 || status === "RESOURCE_EXHAUSTED") return `Gemini: исчерпан лимит бесплатного тарифа — подожди (лимит обновляется), либо включи оплату в Google AI Studio. (${msg})`;
+  if (code === 400 && /API key not valid|API_KEY_INVALID/i.test(msg)) return "Gemini: ключ GEMINI_API_KEY недействителен — создай новый в aistudio.google.com и замени на Vercel.";
+  if (code === 403) return `Gemini: нет доступа по этому ключу (${msg}). Проверь ключ в aistudio.google.com.`;
+  if (code === 404 || status === "NOT_FOUND") return `Gemini: модель не найдена (${msg})`;
+  if (/location is not supported/i.test(msg)) return "Gemini недоступен из региона сервера Vercel — смени регион функций в vercel.json (сейчас sin1).";
+  return `Gemini API: ${msg}`;
+}
+
+async function callOnce(model: string, body: any): Promise<{ text?: string; error?: any }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE}/models/${model}:generateContent?key=${API_KEY}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal,
+    });
+    const j: any = await res.json().catch(() => ({}));
+    if (j.error) return { error: j.error };
+    // у «думающих» моделей часть parts — ход мыслей (thought: true), его не показываем
+    const parts = j?.candidates?.[0]?.content?.parts || [];
+    const text = parts.filter((p: any) => !p.thought).map((p: any) => p.text || "").join("");
+    if (!text.trim()) {
+      const reason = j?.candidates?.[0]?.finishReason || j?.promptFeedback?.blockReason || "";
+      return { error: { message: `пустой ответ${reason ? " (" + reason + ")" : ""}` } };
+    }
+    return { text: text.trim() };
+  } catch (e: any) {
+    if (e?.name === "AbortError") return { error: { message: `Gemini не ответил за ${TIMEOUT_MS / 1000} с — попробуй ещё раз` } };
+    return { error: { message: String(e?.message || e) } };
+  } finally { clearTimeout(timer); }
+}
+
+// запрос с автопереключением модели, если текущую сняли с поддержки
+export async function generate(body: any): Promise<{ text: string; model: string }> {
+  if (!API_KEY) throw new Error("GEMINI_API_KEY не задан на Vercel");
+  let model = await currentModel();
+  let r = await callOnce(model, body);
+  const gone = r.error && (r.error.code === 404 || r.error.status === "NOT_FOUND" || /not found|not supported|deprecated|no longer available/i.test(String(r.error.message || "")));
+  if (gone) {
+    const next = await pickModel();
+    if (next && next !== model) {
+      model = next;
+      r = await callOnce(model, body);
+      if (!r.error) { try { await setSetting("gemini_model", JSON.stringify({ from: ENV_MODEL || DEFAULT_MODEL, to: model })); } catch {} }
+    }
+  }
+  if (r.error) throw new Error(humanError(r.error));
+  return { text: r.text as string, model };
+}
+
+// живая проверка для кнопки в приложении
+export async function aiCheck(): Promise<{ ok: boolean; model?: string; error?: string }> {
+  if (!API_KEY) return { ok: false, error: "GEMINI_API_KEY не задан на Vercel (Settings → Environment Variables), после добавления — Redeploy." };
+  try {
+    const r = await generate({ contents: [{ role: "user", parts: [{ text: "Ответь одним словом: ок" }] }] });
+    return { ok: true, model: r.model };
+  } catch (e: any) { return { ok: false, model: await currentModel(), error: String(e?.message || e) }; }
+}
 
 const VIDEO_LANG_LABEL: Record<string, string> = {
   ru: "русский (обычная орфография)",
@@ -95,20 +190,10 @@ Proof-Numbers / CTA-Close. Не у каждого видео есть все ф�
 }
 
 export async function generateTz(scriptText: string, langCode: string = "ru"): Promise<string> {
-  if (!API_KEY) throw new Error("GEMINI_API_KEY не задан");
   const body = {
     systemInstruction: { parts: [{ text: systemPrompt(langCode) }] },
     contents: [{ role: "user", parts: [{ text: scriptText }] }],
     generationConfig: { temperature: 0.6 },
   };
-  const res = await fetch(`${GEMINI_URL}?key=${API_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j: any = await res.json().catch(() => ({}));
-  if (j.error) throw new Error(`Gemini API: ${j.error.message || JSON.stringify(j.error)}`);
-  const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "";
-  if (!text.trim()) throw new Error("Gemini вернул пустой ответ");
-  return text.trim();
+  return (await generate(body)).text;
 }

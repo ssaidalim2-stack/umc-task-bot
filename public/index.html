@@ -1401,7 +1401,11 @@ function renderReport(){
     <div class="muted">📌 Открытых задач: <b>${t.openTasks}</b></div></div>
     <div class="card"><img src="${url}" style="width:100%;border-radius:10px" alt="chart"></div>
     ${renderClientReport()}
-    ${renderMeta()}`;
+    ${renderMeta()}
+    ${DATA.user.role==='admin'?`<div class="card"><h3>🤖 AI (Gemini)</h3>
+      <div class="muted" style="font-size:12px">Нужен для раскадровки монтажа (и будущих идей для проектов).</div>
+      <button class="btn xs sec" data-aicheck style="margin-top:8px">🔍 Проверить AI</button>
+      <div id="aiOut" class="muted" style="font-size:12px;white-space:pre-wrap;margin-top:6px"></div></div>`:''}`;
 }
 
 // ---- отчёт клиенту: бот сам собирает цифры, менеджер проверяет и отправляет ----
@@ -3091,6 +3095,13 @@ function bind(){
     if(!was){ await load(); }
     else render();
     mOut('💾 Сохранено.\n'+metaTokenText(r.token));
+  });
+  const aic=document.querySelector('[data-aicheck]'); if(aic) aic.onclick=()=>busyClick(aic, async()=>{
+    const o=document.getElementById('aiOut'); if(o) o.textContent='Спрашиваю Gemini…';
+    let r=null; try{ r=await api('POST',{type:'ai_check'}); }catch(e){}
+    const a=r&&r.ai;
+    const t=!a?'⚠️ нет ответа от сервера':a.ok?`✅ AI работает — модель ${a.model}`:`❌ AI не работает${a.model?' (модель '+a.model+')':''}\n\n${a.error}`;
+    const o2=document.getElementById('aiOut'); if(o2) o2.textContent=t;
   });
   const mpl=document.querySelector('[data-metapull]'); if(mpl) mpl.onclick=async()=>{
     mOut('Тяну данные за вчера…');

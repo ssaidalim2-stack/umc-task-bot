@@ -5,7 +5,7 @@ import * as d2 from "./db2";
 import { bot } from "./bot";
 import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNER_ROLES, nextStage } from "./projects";
 import * as meta from "./meta";
-import { aiConfigured, generateTz } from "./ai";
+import { aiConfigured, generateTz, aiCheck } from "./ai";
 import * as fin from "./finance";
 
 // ---------- проверка подписи Telegram WebApp ----------
@@ -602,6 +602,10 @@ export async function doAction(userId: number, action: any) {
       try { return { configured: true, token: chk, ...(await meta.listAvailableAccounts()) }; }
       catch (e: any) { return { configured: true, token: chk, error: String(e.message || e) }; }
     }
+    case "ai_check": {
+      if (role !== "admin") return { error: "нет доступа" };
+      return { ai: await aiCheck() };
+    }
     case "meta_set_token": {
       if (role !== "admin") return { error: "нет доступа" };
       const st = await meta.setToken(String(action.token || ""));
@@ -786,7 +790,7 @@ export async function doAction(userId: number, action: any) {
       const d = parseItemData((it as any).title);
       let aiText = "";
       try { aiText = await generateTz(script, d.lang || "ru"); }
-      catch (e: any) { return { items: items0.map(serializeItem), error: `Ошибка AI: ${e?.message || e}` }; }
+      catch (e: any) { return { items: items0.map(serializeItem), error: String(e?.message || e) }; }
       d.ai_tz = aiText;
       await d2.updateItem(+action.id, { title: JSON.stringify(d) });
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
