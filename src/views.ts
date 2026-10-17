@@ -119,53 +119,72 @@ export async function buildReport(title: string): Promise<{ text: string; chartU
 // Любой блок Meta может быть недоступен (токен протух / доступ закрыт) — отчёт
 // всё равно должен уйти, просто без этих строк: цифры клиенту важны, но
 // неработающая интеграция не повод не отчитаться о проделанной работе.
-export async function buildClientReport(projectId: number, note: string): Promise<string> {
+// пункты выбранного периода (по умолчанию — текущего) для отчёта клиенту: и для картинки, и для текста
+export interface ReportItem { idx: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null }
+export async function clientPlan(projectId: number, planId?: number | null): Promise<{ planId: number | null; period: string; plans: { id: number; period: string; is_active: boolean }[]; items: ReportItem[] }> {
+  const { parseItemData, parseShootDay } = await import("./webapp");
+  const plans = (await d2.getAllPlans()).filter((p) => p.project_id === projectId);
+  const plan = (planId && plans.find((p) => p.id === planId)) || d2.currentPlanByProject(plans).get(projectId) || null;
+  const raw = plan ? (await d2.listItemsByPlan(plan.id)).filter((x) => x.type !== "story") : [];
+  const items: ReportItem[] = raw.sort((a, b) => a.idx - b.idx).map((it) => {
+    const d = parseItemData((it as any).title);
+    return { idx: it.idx, type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date) };
+  });
+  return { planId: plan?.id ?? null, period: plan?.period || "", plans: plans.map((p) => ({ id: p.id, period: p.period, is_active: p.is_active })), items };
+}
+export const CLIENT_STATUS: Record<string, string> = { idea: "🕒 В плане", script: "📝 Сценарий готов", shoot: "🎥 Снято", edit: "✂️ Смонтировано", published: "✅ Опубликовано", todo: "🕒 В работе", done: "✅ Готово" };
+const LANG_RU: Record<string, string> = { ru: "РУС", uz: "УЗБ", en: "ENG" };
+// темы пишут как угодно — звёздочки и подчёркивания сломали бы разметку Telegram
+const clean = (t: string) => t.replace(/[*_`\[\]]/g, "").replace(/\s+/g, " ").trim();
+
+export async function buildClientReport(projectId: number, note: string, planId?: number | null): Promise<string> {
   const proj = await d2.getProject(projectId);
   if (!proj) return "";
-  const s = await d2.planSummary(projectId);
-  const { parseItemData, parseShootDay } = await import("./webapp");
+  const cp = await clientPlan(projectId, planId);
+  const videos = cp.items.filter((x) => x.type === "video");
+  const graphics = cp.items.filter((x) => x.type !== "video");
+  const cnt = (st: string) => videos.filter((v) => v.stage === st).length;
 
   const L: string[] = [];
   const nowRu = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10).split("-").reverse().join(".");
-  L.push(`📊 *Отчёт по проекту ${proj.name}*`);
-  L.push(`Дата: ${nowRu}`);
+  L.push(`📊 *Отчёт по проекту ${clean(proj.name)}*`);
+  L.push(`${cp.period ? "Период: " + clean(cp.period) + " · " : ""}статус на ${nowRu}`);
   L.push("");
 
   // --- контент ---
-  const published = s.video.published || 0;
-  const edited = s.video.edit || 0;
-  const shot = s.video.shoot || 0;
-  const scripted = s.video.script || 0;
+  const published = cnt("published");
   L.push("*Контент*");
-  L.push(`🎬 Опубликовано видео: *${published}* из ${s.videoTotal}`);
-  if (edited) L.push(`✂️ Смонтировано, готово к публикации: ${edited}`);
-  if (shot) L.push(`🎥 Отснято, в монтаже: ${shot}`);
-  if (scripted) L.push(`📝 Сценарии готовы, ждут съёмки: ${scripted}`);
-  if (s.graphicTotal) L.push(`🖼 Графика: *${s.graphicDone}* из ${s.graphicTotal}`);
+  L.push(`🎬 Опубликовано видео: *${published}* из ${videos.length}`);
+  if (cnt("edit")) L.push(`✂️ Смонтировано, готово к публикации: ${cnt("edit")}`);
+  if (cnt("shoot")) L.push(`🎥 Отснято, в монтаже: ${cnt("shoot")}`);
+  if (cnt("script")) L.push(`📝 Сценарии готовы, ждут съёмки: ${cnt("script")}`);
+  if (graphics.length) L.push(`🖼 Графика: *${graphics.filter((g) => g.stage === "done").length}* из ${graphics.length}`);
 
   // --- съёмки и ближайшая публикация ---
-  const items = (await d2.getAllItems()).filter((i) => i.project_id === projectId && i.type === "video");
   const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const shootDays = new Set<string>();
-  const upcoming: { day: string; theme: string }[] = [];
-  for (const it of items) {
-    const data = parseItemData((it as any).title);
-    const d = parseShootDay(data.shoot_date);
-    if (d) shootDays.add(d);
-    // ближайший выход: ещё не опубликовано и дедлайн сегодня или позже
-    if (it.stage !== "published") {
-      const dl = parseShootDay(data.deadline);
-      if (dl && dl >= today) upcoming.push({ day: dl, theme: (data.theme || "").trim() });
-    }
-  }
+  const shootDays = new Set(videos.map((v) => v.shootDay).filter(Boolean) as string[]);
+  const upcoming = videos.filter((v) => v.stage !== "published" && v.publishDay && v.publishDay >= today).sort((a, b) => (a.publishDay as string).localeCompare(b.publishDay as string));
   const past = [...shootDays].filter((d) => d <= today).sort();
   const future = [...shootDays].filter((d) => d > today).sort();
   const ru = (iso: string) => iso.split("-").reverse().join(".");
   if (shootDays.size) L.push(`📅 Съёмочных дней за период: ${shootDays.size}`);
   if (past.length) L.push(`🎥 Последняя съёмка: ${ru(past[past.length - 1])}`);
   if (future.length) L.push(`🗓 Ближайшая съёмка: ${ru(future[0])}`);
-  upcoming.sort((a, b) => a.day.localeCompare(b.day));
-  if (upcoming.length) L.push(`⏭ Следующий выход: ${ru(upcoming[0].day)}`);
+  if (upcoming.length) L.push(`⏭ Следующий выход: ${ru(upcoming[0].publishDay as string)}`);
+
+  // --- статус каждого ролика: ради этого отчёт и открывают ---
+  if (cp.items.length) {
+    L.push("");
+    L.push("*Статус по контенту*");
+    for (const it of cp.items) {
+      const kind = it.type === "video" ? "Видео" : it.type === "photo" ? "Фото" : "Графика";
+      const bits = [`${it.idx}. ${kind}: ${clean(it.theme) || "тема уточняется"}`];
+      if (LANG_RU[it.lang]) bits.push(LANG_RU[it.lang]);
+      bits.push(CLIENT_STATUS[it.stage] || it.stage);
+      if (it.stage !== "published" && it.stage !== "done" && it.publishDay) bits.push(`выход ${ru(it.publishDay)}`);
+      L.push(bits.join(" — "));
+    }
+  }
 
   // --- реклама и Instagram ---
   const map = await meta.getMetaMap();
