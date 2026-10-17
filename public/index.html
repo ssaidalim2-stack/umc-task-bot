@@ -204,6 +204,24 @@
   .vid.trow-graphic{border-left-color:#ec4899}
   .vid.trow-photo{border-left-color:#f59e0b}
   .trow-main{min-width:0;flex:1;cursor:pointer;line-height:1.5}
+  /* горящий дедлайн: пункт не опубликован, а дата выхода рядом или прошла */
+  .vid.trow.dl-hot,.vid.trow.dl-late{background:rgba(239,68,68,.12);border-left-color:#ef4444}
+  .dlflag{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:800;background:#ef4444;color:#fff;white-space:nowrap}
+  /* «Таблицей»: сетка карточек, как картинка отчёта, но с рабочими подробностями */
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:4px}
+  .tcard{position:relative;display:flex;flex-direction:column;gap:6px;background:var(--bg);border:1px solid var(--line);border-left:5px solid #3b82f6;border-radius:14px;padding:10px 12px 11px;min-height:178px}
+  .tcard.tc-graphic{border-left-color:#ec4899} .tcard.tc-photo{border-left-color:#f59e0b} .tcard.tc-target{border-left-color:#f97316}
+  .tcard.tc-done{background:color-mix(in srgb,#16a34a 9%,var(--bg))}
+  .tcard.dl-hot,.tcard.dl-late{background:color-mix(in srgb,#ef4444 16%,var(--bg));border-color:#ef4444;border-left-color:#ef4444;box-shadow:0 0 0 1px #ef4444}
+  .tcard .tc-head{display:flex;align-items:center;gap:6px}
+  .tcard .tc-date{margin-left:auto;font-size:12px;font-weight:700;color:var(--hint);white-space:nowrap}
+  .tcard .tc-body{cursor:pointer;flex:1;display:flex;flex-direction:column;gap:5px;min-width:0}
+  .tcard .tc-theme{font-weight:700;font-size:15px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+  .tcard .tc-info{font-size:12px;color:var(--hint);line-height:1.45}
+  .tcard .tc-info b{color:var(--text);font-weight:600}
+  .tcard .tc-foot{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .tcard .tc-alert{font-size:12px;font-weight:800;color:#fff;background:#ef4444;border-radius:8px;padding:4px 8px}
+  body.wide header,body.wide .wrap{max-width:1680px}
   .trow-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   /* на телефоне: номер, тип и тема — на всю ширину, управление строкой ниже */
   @media (max-width:719px){ .trow-main{flex:1 1 calc(100% - 34px)} .trow-ctl{width:100%;padding-left:28px} }
@@ -1115,6 +1133,7 @@ function render(){
   const selEnd=active&&typeof active.selectionEnd==='number'?active.selectionEnd:null;
   const map={home:renderHome,board:renderBoard,plan:renderTable,video:renderVideo,tasks:renderTasks,report:renderReport,subs:renderSubs,work:renderWork,tz:renderTZ,mywork:renderMyWork,analytics:renderAnalytics,team:renderTeam,projects:renderProjects,sales:renderSales,calendar:renderCalendar,week:renderWeek,umc:renderUmc,stories:renderStories,finance:renderFinance};
   v.innerHTML=(map[TAB]||renderTasks)();
+  document.body.classList.toggle('wide',TAB==='plan'&&TBL_VIEW==='grid'&&!TBL_OPEN);
   bind();
   if(activeId){ const el=document.getElementById(activeId); if(el){ el.focus(); if(selStart!=null&&el.setSelectionRange){ try{el.setSelectionRange(selStart,selEnd);}catch(e){} } } }
 }
@@ -1165,9 +1184,9 @@ function renderTable(){
     const posOf=new Map(vis.map((it,i)=>[it.id,i+1]));
     rows=!vis.length?'<div class="muted">Пунктов пока нет. Добавь ниже.</div>'
       :TBL_VIEW==='weeks'?renderWeeks(vis,nums,posOf)
-      :vis.map(it=>rowHtml(it,posOf.get(it.id),nums[it.id])).join('');
+      :renderGrid(vis,nums,posOf);
   }
-  const viewPills=`<div class="pills" style="padding:0 0 6px">${[["weeks","🗓 По неделям"],["list","☰ Списком"]].map(([k,l])=>`<div class="pill ${TBL_VIEW===k?'active':''}" data-tview="${k}">${l}</div>`).join('')}</div>`;
+  const viewPills=`<div class="pills" style="padding:0 0 6px">${[["weeks","🗓 По неделям"],["grid","▦ Таблицей"]].map(([k,l])=>`<div class="pill ${TBL_VIEW===k?'active':''}" data-tview="${k}">${l}</div>`).join('')}</div>`;
 
   const bulkBar = TBL_SELECTED.size ? `<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">
     <button class="btn sm" data-tbulkcopy>📋 Копировать выбранные (${TBL_SELECTED.size})</button>
@@ -1185,6 +1204,7 @@ function renderTable(){
 // ---- недели в контент-плане: по дате выхода (поле «дедлайн»), неделя — Пн–Вс ----
 let TBL_VIEW='weeks';
 try{ TBL_VIEW=localStorage.getItem('umc_tbl_view')||'weeks'; }catch(e){}
+if(TBL_VIEW!=='weeks') TBL_VIEW='grid'; // старое «Списком» → «Таблицей»
 const MONTH_SHORT=['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
 // «18.10», «18.10.2026 18:00», «18.10 суббота» → дата; год не указан — ближайший к сегодняшнему
 function itemDay(s){
@@ -1219,6 +1239,49 @@ function renderWeeks(vis,nums,posOf){
   if(undated.length) h+=head('📌 Без даты выхода','впиши дедлайн — пункт встанет в свою неделю',undated,false)+undated.map(it=>rowHtml(it,posOf.get(it.id),nums[it.id])).join('');
   return h;
 }
+// горящий дедлайн: не опубликован/не готов, а до даты выхода ≤2 дней (hot) или она уже прошла (late)
+function dlState(it){
+  if(it.stage==='published'||it.stage==='done') return null;
+  const d=itemDay(it.deadline); if(!d) return null;
+  const t=tashkentNow(), today=Date.UTC(t.getUTCFullYear(),t.getUTCMonth(),t.getUTCDate());
+  const days=Math.round((d-today)/86400000);
+  if(days<0) return {k:'late',days,txt:`🔥 Дедлайн упущен${days<-1?' — '+(-days)+' дн. назад':' — вчера'}`};
+  if(days<=2) return {k:'hot',days,txt:`⏰ Дедлайн близок — ${days===0?'сегодня':days===1?'завтра':'через 2 дня'}`};
+  return null;
+}
+function ddmm(s){ const d=itemDay(s); return d?String(d.getUTCDate()).padStart(2,'0')+'.'+String(d.getUTCMonth()+1).padStart(2,'0'):''; }
+function renderGrid(vis,nums,posOf){
+  return `<div class="tgrid">${vis.map(it=>gridCard(it,posOf.get(it.id),nums[it.id])).join('')}</div>`;
+}
+function gridCard(it,pos,n){
+  const k=typeKey(it), dl=dlState(it), fin=it.stage==='published'||it.stage==='done', isV=it.type==='video';
+  const theme=(it.theme||'').trim();
+  const sel=`<input type="checkbox" data-tsel="${it.id}" ${TBL_SELECTED.has(it.id)?'checked':''} title="Выбрать для группового копирования">`;
+  const date=it.deadline?`${it.target_only?'запуск':'выход'} ${esc(ddmm(it.deadline)||it.deadline)}`:'<span style="opacity:.7">без даты</span>';
+  const info=[];
+  if(isV&&!it.no_shoot){
+    if(it.shot_at) info.push(`🎥 снято <b>${it.shot_at.split('-').reverse().slice(0,2).join('.')}</b>`);
+    else if(it.shoot_date) info.push(`📅 съёмка <b>${esc(it.shoot_date)}${it.shoot_time?' '+esc(it.shoot_time):''}</b>${it.location?' · '+esc(it.location):''}`);
+    else if(!['shoot','edit','published'].includes(it.stage)) info.push('📅 съёмка не назначена');
+    if(it.shoot_manager) info.push(`👤 ${esc(it.shoot_manager)}`);
+  }
+  if(isV&&it.no_shoot&&!it.target_only) info.push('без съёмки');
+  if(isV){ const fr=(it.frames||[]).filter(f=>frameText(f).trim()).length; info.push(fr?`📝 сценарий: <b>${fr} ${fr===1?'кадр':fr<5?'кадра':'кадров'}</b>`:(it.script||'').trim()?'📝 сценарий есть':'📝 сценария нет'); }
+  else if((it.script||'').trim()) info.push('📝 текст на макет есть');
+  if(it.format) info.push(esc(formatLabel(it.format)));
+  const marks=[it.reference&&it.reference.trim()?'🔗 референс':'',it.ai_tz?'✂️ ТЗ монтажа':'',it.locked?'🔒':''].filter(Boolean).join(' · ');
+  if(marks) info.push(marks);
+  const lg=it.lang?`<span class="chip">${LANG_SHORT[it.lang]||esc(it.lang)}</span>`:'';
+  return `<div class="tcard tc-${k}${fin?' tc-done':''}${dl?' dl-'+dl.k:''}">
+    <div class="tc-head">${canEdit()?sel:''}<b>${pos}:</b> ${typeBadge(it,n)}<span class="tc-date">${date}</span></div>
+    <div class="tc-body" data-topen="${it.id}">
+      ${dl?`<div class="tc-alert">${dl.txt}</div>`:''}
+      <div class="tc-theme">${theme?esc(theme):'<span class="muted">без темы</span>'}</div>
+      <div class="tc-info">${info.join('<br>')}</div>
+    </div>
+    <div class="tc-foot"><span class="chip">${statusLabel(it.type,it.stage,it)}</span>${lg}</div>
+  </div>`;
+}
 function rowHtml(it,pos,n){
   const theme=(it.theme||'').trim();
   const body=theme?esc(theme):'<span class="muted">без темы</span>';
@@ -1229,8 +1292,8 @@ function rowHtml(it,pos,n){
   const mv=canEdit()&&!itemDay(it.deadline)?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
   const lg=it.lang?`<span class="chip">${LANG_SHORT[it.lang]||it.lang}</span>`:'';
   const sel=`<input type="checkbox" data-tsel="${it.id}" ${TBL_SELECTED.has(it.id)?'checked':''} title="Выбрать для группового копирования" style="margin-right:2px">`;
-  const k=TYPE_NAME[it.type]?it.type:'video';
-  return `<div class="vid trow trow-${k}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)}${!it.target_only&&it.no_shoot&&it.type==='video'?' <span class="tb" style="background:rgba(127,127,127,.18);color:var(--hint)">без съёмки</span>':''} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage,it)}</span>${mv}</div></div>`;
+  const k=TYPE_NAME[it.type]?it.type:'video', dls=dlState(it);
+  return `<div class="vid trow trow-${k}${dls?' dl-'+dls.k:''}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)}${dls?` <span class="dlflag">${dls.k==='late'?'🔥 дедлайн упущен':'⏰ дедлайн близок'}</span>`:''}${!it.target_only&&it.no_shoot&&it.type==='video'?' <span class="tb" style="background:rgba(127,127,127,.18);color:var(--hint)">без съёмки</span>':''} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage,it)}</span>${mv}</div></div>`;
 }
 
 function renderFrames(it){
