@@ -7,6 +7,7 @@ import { VIDEO_STAGES, STAGE_LABEL, STAGE_OWNER_ROLES, nextStage } from "./proje
 import * as meta from "./meta";
 import { aiConfigured, generateTz, aiCheck } from "./ai";
 import * as fin from "./finance";
+import * as ideas from "./ideas";
 
 // ---------- проверка подписи Telegram WebApp ----------
 export function validateInitData(initData: string): { ok: boolean; user?: any } {
@@ -725,6 +726,25 @@ export async function doAction(userId: number, action: any) {
       if (role !== "admin") return { error: "нет доступа" };
       await d2.setProjectArchived(+action.id, false);
       return getData(userId);
+    }
+    case "project_set_brief": {
+      if (role !== "admin") return { error: "нет доступа" };
+      const f = action.brief || {};
+      const brief: Record<string, string> = {};
+      for (const [k] of ideas.BRIEF_FIELDS) brief[k] = String(f[k] || "").trim().slice(0, 600);
+      await d2.setProjectBrief(+action.id, brief);
+      return getData(userId);
+    }
+    // пробная генерация из приложения — в историю идей и в рассылку не попадает
+    case "ideas_preview": {
+      if (role !== "admin") return { error: "нет доступа" };
+      if (!aiConfigured()) return { error: "AI не настроен: нет GEMINI_API_KEY" };
+      try {
+        const rec = await ideas.generateForProject(+action.id, ideas.localDay(), false, 50000);
+        const proj = await d2.getProject(+action.id);
+        const { html } = ideas.formatProject(proj?.name || "", rec);
+        return { ideasPreview: html.replace(/<a href="([^"]+)">[^<]*<\/a>/g, "$1").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"), model: rec.model };
+      } catch (e: any) { return { error: String(e?.message || e) }; }
     }
     case "project_set_desc": {
       if (role !== "admin") return { error: "нет доступа" };

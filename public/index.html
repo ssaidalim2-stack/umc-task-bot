@@ -978,7 +978,7 @@ async function silentRefresh(){
   if(document.hidden || ACT_BUSY) return;
   const el=document.activeElement;
   if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
-  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null || FIN_FORM) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null || FIN_FORM || PROJ_BRIEF_OPEN!=null) return;
   try{
     const res=await api('GET');
     DATA=res;
@@ -1762,20 +1762,27 @@ function renderTeam(){
         <button class="btn xs sec" data-permreset="${m.id}">Сбросить (по ролям)</button>
       </div>
     </div>`:'';
-    const isPureManager=roles.includes('manager') && !roles.includes('pm') && !m.isAdmin;
+    // «свои проекты»: у обычного менеджера ещё и ограничивают видимость таблицы,
+    // у проджект-менеджера — только отмечают, за что он отвечает (видит он всё равно всё);
+    // по своим проектам человек получает утренние идеи
+    const isPM=roles.includes('pm');
+    const canOwn=(roles.includes('manager')||isPM) && !m.isAdmin;
+    const isPureManager=roles.includes('manager') && !isPM && !m.isAdmin;
     const projIds=m.projectIds||[];
-    const projPanel=(TEAM_PROJ_OPEN===m.id&&isPureManager)?`<div class="card" style="margin:6px 0 10px">
-      <div class="muted" style="margin-bottom:6px">Проекты, которые видит этот менеджер в таблице ${projIds.length?'<span class="badge">ограничено</span>':'<span class="badge">видит все</span>'}:</div>
+    const projPanel=(TEAM_PROJ_OPEN===m.id&&canOwn)?`<div class="card" style="margin:6px 0 10px">
+      <div class="muted" style="margin-bottom:6px">${isPureManager
+        ?`Свои проекты этого менеджера — их он видит в таблице и по ним получает утренние идеи ${projIds.length?'<span class="badge">ограничено</span>':'<span class="badge">видит все</span>'}:`
+        :`Свои проекты — за них он отвечает и по ним получает утренние идеи. Видит он как проджект-менеджер всё равно все проекты:`}</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
         ${(DATA.projects||[]).map(p=>`<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" data-projchk="${m.id}:${p.id}" ${projIds.includes(p.id)?'checked':''}> ${esc(p.name)}</label>`).join('')}
       </div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Не отмечено ни одного — видит все проекты (по умолчанию).</div>
+      <div class="muted" style="font-size:11px;margin-top:6px">${isPureManager?'Не отмечено ни одного — видит все проекты, но утренних идей не получает.':'Не отмечено ни одного — утренних идей не получает.'}</div>
       <button class="btn xs" data-projsave="${m.id}" style="margin-top:10px">Сохранить</button>
     </div>`:'';
     return `<div class="vid" style="align-items:center">
-      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${roleBadges}${m.username?' · @'+esc(m.username):''}${m.hasGroup?' · 🔗 группа привязана':''}${isPureManager&&projIds.length?' · 📁 '+projIds.length+' проект(ов)':''}</div></div>
+      <div style="flex:1;min-width:0"><div>${esc(m.name||m.username||String(m.id))}</div><div class="muted" style="font-size:12px">${roleBadges}${m.username?' · @'+esc(m.username):''}${m.hasGroup?' · 🔗 группа привязана':''}${canOwn&&projIds.length?' · 📁 '+projIds.length+' проект(ов)':''}</div></div>
       <button class="xbtn" data-roletoggle="${m.id}" title="Роли">🎭</button>
-      ${isPureManager?`<button class="xbtn" data-projtoggle2="${m.id}" title="Какие проекты видит">📁</button>`:''}
+      ${canOwn?`<button class="xbtn" data-projtoggle2="${m.id}" title="Свои проекты">📁</button>`:''}
       <button class="xbtn" data-permtoggle="${m.id}" title="Права доступа к разделам">⚙️</button>
       ${m.hasGroup?`<button class="xbtn" data-groupunbind="${m.id}" title="Отвязать группу">🔗✕</button>`:''}
       <button class="xbtn" data-teamdel="${m.id}" title="Удалить из команды">🗑</button>
@@ -1784,8 +1791,23 @@ function renderTeam(){
   return `<div class="card"><h3>👥 Команда</h3>
     ${rows||'<div class="muted">Пока никто не заходил в бота.</div>'}
     <div class="muted" style="font-size:12px;margin-top:10px">Новый человек появится тут сам, как только откроет бота (/start). Кнопка 🎭 — назначить одну или несколько ролей (они складывают доступные разделы). Кнопка ⚙️ — точечно включить/выключить конкретные разделы именно для этого человека, в обход ролей.
-    <br><br>📁 Обычный менеджер по умолчанию видит все проекты в таблице; кнопкой 📁 можно ограничить его конкретными проектами. Роль "Проджект-менеджер" всегда видит всё, независимо от этих настроек.
+    <br><br>📁 Свои проекты менеджера: по ним он каждое утро получает идеи. Обычный менеджер к тому же видит в таблице только их (ничего не отмечено — видит все). Проджект-менеджер видит всё в любом случае, а 📁 у него только отмечает, за какие проекты он отвечает.
     <br><br>🔗 Личная группа: чтобы ТЗ и напоминания о дедлайнах дублировались человеку не только в личку, но и в его группу — добавь бота в эту группу и напиши там команду <code>/bindperson Имя</code> (или его telegram_id). Отвязать можно кнопкой 🔗✕ здесь.</div></div>`;
+}
+let PROJ_BRIEF_OPEN=null, PROJ_IDEAS={};
+const BRIEF_FIELDS_FRONT=[["niche","Ниша и продукт","напр. алюминиевые и ПВХ-рамы, окна, двери"],["audience","Целевая аудитория","кто покупает, чем живёт"],["geo","Город / регион","напр. Ташкент"],["lang","Язык контента","русский / узбекский / английский"],["tone","Тон бренда","напр. экспертный, без пафоса"],["avoid","Чего не предлагать","темы, форматы, конкуренты"]];
+function renderBrief(p){
+  const b=p.brief||{};
+  const pv=PROJ_IDEAS[p.id];
+  return `<div class="card" style="margin:6px 0 10px">
+    <div class="muted" style="margin-bottom:6px">🧠 Бриф для утренних AI-идей — чем подробнее, тем точнее идеи:</div>
+    <div class="fcols">${BRIEF_FIELDS_FRONT.map(([k,l,ph])=>`<div><div class="muted" style="font-size:12px">${l}:</div><input data-brief="${k}" value="${esc(b[k]||'')}" placeholder="${esc(ph)}"></div>`).join('')}</div>
+    <div class="row" style="gap:6px;margin-top:10px;justify-content:flex-start;flex-wrap:wrap">
+      <button class="btn xs" data-briefsave="${p.id}">💾 Сохранить</button>
+      <button class="btn xs sec" data-ideaspreview="${p.id}">🧪 Пример идей на сегодня</button>
+    </div>
+    ${pv?`<div class="muted" style="font-size:13px;white-space:pre-wrap;margin-top:10px;color:var(--text)">${esc(pv)}</div>`:''}
+  </div>`;
 }
 function renderProjects(){
   const all=DATA.projectsAll||[];
@@ -1796,10 +1818,12 @@ function renderProjects(){
         <div><b>${esc(p.name)}</b> <span class="muted" style="font-size:12px">(${esc(p.key)})</span></div>
         <textarea data-projdesc="${p.id}" style="min-height:44px;margin-top:4px;font-size:13px" placeholder="Описание проекта — чем занимается, кто клиент...">${esc(p.description||'')}</textarea>
       </div>
+      ${p.archived?'':`<button class="xbtn" data-briefopen="${p.id}" title="Бриф для AI-идей">🧠${p.brief&&p.brief.niche?' ✓':''}</button>`}
       <button class="xbtn" data-projtoggle="${p.id}:${p.archived?0:1}" title="${p.archived?'Восстановить из архива':'В архив'}">${p.archived?'↩️':'🗄'}</button>
-    </div>`;
+    </div>${PROJ_BRIEF_OPEN===p.id?renderBrief(p):''}`;
   let h=`<div class="card"><h3>🗂 Проекты</h3>
-    ${active.length?active.map(row).join(''):'<div class="muted">Нет активных проектов</div>'}</div>`;
+    ${active.length?active.map(row).join(''):'<div class="muted">Нет активных проектов</div>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">🧠 — бриф для утренних идей. Идеи приходят менеджерам по их проектам (кнопка 📁 в «Команде») каждый день, кроме воскресенья, с 9:00 вместе с задачами на день.</div></div>`;
   h+=`<div class="card"><h3>➕ Новый проект</h3>
     <div class="muted">Название:</div><input id="projName" placeholder="напр. Новый бренд">
     <div class="muted" style="margin-top:6px">Описание (что за проект):</div><textarea id="projDesc" placeholder="Чем занимается, кто клиент, особенности..."></textarea>
@@ -3103,6 +3127,20 @@ function bind(){
     const t=!a?'⚠️ нет ответа от сервера':a.ok?`✅ AI работает — модель ${a.model}`:`❌ AI не работает${a.model?' (модель '+a.model+')':''}\n\n${a.error}`;
     const o2=document.getElementById('aiOut'); if(o2) o2.textContent=t;
   });
+  document.querySelectorAll('[data-briefopen]').forEach(b=>b.onclick=()=>{const id=+b.dataset.briefopen;PROJ_BRIEF_OPEN=(PROJ_BRIEF_OPEN===id?null:id);render();});
+  document.querySelectorAll('[data-briefsave]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const brief={}; document.querySelectorAll('[data-brief]').forEach(i=>brief[i.dataset.brief]=i.value);
+    const r=await api('POST',{type:'project_set_brief',id:+b.dataset.briefsave,brief});
+    if(r&&r.error){tg.showAlert&&tg.showAlert(r.error);return;}
+    if(r&&r.projects){DATA=r;} tg.showAlert&&tg.showAlert('Бриф сохранён'); render();
+  }));
+  document.querySelectorAll('[data-ideaspreview]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
+    const id=+b.dataset.ideaspreview;
+    PROJ_IDEAS[id]='⏳ Gemini ищет новости и придумывает идеи — до минуты…'; render();
+    let r=null; try{ r=await api('POST',{type:'ideas_preview',id}); }catch(e){}
+    PROJ_IDEAS[id]=!r?'⚠️ нет ответа от сервера':r.error?('❌ '+r.error):(r.ideasPreview+'\n\n(модель '+r.model+'; это пример — в рассылку не попадает)');
+    render();
+  }));
   const mpl=document.querySelector('[data-metapull]'); if(mpl) mpl.onclick=async()=>{
     mOut('Тяну данные за вчера…');
     const r=await api('POST',{type:'meta_pull'});

@@ -18,7 +18,8 @@ export async function getProject(id: number): Promise<Project | null> {
 }
 
 // ---------- метаданные проекта (описание, архив) — без ALTER TABLE, в app_settings как и всё остальное ----------
-export interface ProjectMeta { description: string; archived: boolean; }
+// brief — бриф для утренних AI-идей: ниша, аудитория, гео, язык контента, тон, чего не предлагать
+export interface ProjectMeta { description: string; archived: boolean; brief?: Record<string, string>; }
 async function projectMetaRaw(id: number): Promise<ProjectMeta> {
   try { const raw = await getSetting(`project_meta:${id}`); return raw ? { description: "", archived: false, ...JSON.parse(raw) } : { description: "", archived: false }; }
   catch { return { description: "", archived: false }; }
@@ -34,6 +35,11 @@ export async function getActiveProjects(): Promise<Project[]> {
 export async function setProjectArchived(id: number, archived: boolean): Promise<void> {
   const meta = await projectMetaRaw(id);
   meta.archived = archived;
+  await setSetting(`project_meta:${id}`, JSON.stringify(meta));
+}
+export async function setProjectBrief(id: number, brief: Record<string, string>): Promise<void> {
+  const meta = await projectMetaRaw(id);
+  meta.brief = brief;
   await setSetting(`project_meta:${id}`, JSON.stringify(meta));
 }
 export async function setProjectDescription(id: number, description: string): Promise<void> {

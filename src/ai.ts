@@ -53,9 +53,10 @@ function humanError(e: any): string {
   return `Gemini API: ${msg}`;
 }
 
-async function callOnce(model: string, body: any): Promise<{ text?: string; error?: any }> {
+export interface Source { title: string; uri: string }
+async function callOnce(model: string, body: any, timeoutMs = TIMEOUT_MS): Promise<{ text?: string; sources?: Source[]; error?: any }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${BASE}/models/${model}:generateContent?key=${API_KEY}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal,
@@ -69,29 +70,32 @@ async function callOnce(model: string, body: any): Promise<{ text?: string; erro
       const reason = j?.candidates?.[0]?.finishReason || j?.promptFeedback?.blockReason || "";
       return { error: { message: `пустой ответ${reason ? " (" + reason + ")" : ""}` } };
     }
-    return { text: text.trim() };
+    // ссылки, по которым модель искала в Google (только при включённом поиске)
+    const chunks = j?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const sources: Source[] = chunks.map((c: any) => ({ title: String(c?.web?.title || ""), uri: String(c?.web?.uri || "") })).filter((x: Source) => x.uri);
+    return { text: text.trim(), sources };
   } catch (e: any) {
-    if (e?.name === "AbortError") return { error: { message: `Gemini не ответил за ${TIMEOUT_MS / 1000} с — попробуй ещё раз` } };
+    if (e?.name === "AbortError") return { error: { message: `Gemini не ответил за ${Math.round(timeoutMs / 1000)} с — попробуй ещё раз` } };
     return { error: { message: String(e?.message || e) } };
   } finally { clearTimeout(timer); }
 }
 
 // запрос с автопереключением модели, если текущую сняли с поддержки
-export async function generate(body: any): Promise<{ text: string; model: string }> {
+export async function generate(body: any, timeoutMs = TIMEOUT_MS): Promise<{ text: string; model: string; sources: Source[] }> {
   if (!API_KEY) throw new Error("GEMINI_API_KEY не задан на Vercel");
   let model = await currentModel();
-  let r = await callOnce(model, body);
+  let r = await callOnce(model, body, timeoutMs);
   const gone = r.error && (r.error.code === 404 || r.error.status === "NOT_FOUND" || /not found|not supported|deprecated|no longer available/i.test(String(r.error.message || "")));
   if (gone) {
     const next = await pickModel();
     if (next && next !== model) {
       model = next;
-      r = await callOnce(model, body);
+      r = await callOnce(model, body, timeoutMs);
       if (!r.error) { try { await setSetting("gemini_model", JSON.stringify({ from: ENV_MODEL || DEFAULT_MODEL, to: model })); } catch {} }
     }
   }
   if (r.error) throw new Error(humanError(r.error));
-  return { text: r.text as string, model };
+  return { text: r.text as string, model, sources: r.sources || [] };
 }
 
 // живая проверка для кнопки в приложении

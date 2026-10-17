@@ -3,6 +3,7 @@ import * as db from "./db";
 import * as d2 from "./db2";
 import * as views from "./views";
 import * as fin from "./finance";
+import * as ideas from "./ideas";
 import { STAGE_OWNER_ROLES, STAGE_LABEL, nextStage, APPS } from "./projects";
 import { roleOf } from "./webapp";
 
@@ -176,12 +177,23 @@ export function registerV2(bot: Bot) {
     await ctx.reply(`✅ Подписка ${app} добавлена (куплена ${date}, ${days} дн.). Напомню перед окончанием и после.`);
   });
 
+  // «➕ в план» под утренними идеями
+  bot.callbackQuery(/^idea:(\d+):(\d{8}):(\d)$/, async (ctx) => {
+    const m = await db.getMember(ctx.from.id);
+    const r = await ideas.addToPlan(+ctx.match![1], ctx.match![2], +ctx.match![3], m?.name || "AI-идеи");
+    await ctx.answerCallbackQuery({ text: r.text, show_alert: !r.ok });
+    if (r.ok && r.rec) {
+      const proj = await d2.getProject(r.rec.projectId);
+      try { await ctx.editMessageReplyMarkup({ reply_markup: ideas.formatProject(proj?.name || "", r.rec).kb }); } catch {}
+    }
+  });
+
   bot.command("bind", async (ctx) => {
     if (ctx.chat.type === "private") return ctx.reply("Эту команду используй В ГРУППЕ, куда добавлен бот.\nФормат: /bind <проект> <раздел>\nРазделы: all, idea, script, shoot, edit, published");
     const m = await db.getMember(ctx.from!.id);
     if (!isAdmin(m, ctx.from!.id)) return ctx.reply("⛔ Только админ может привязать группу.");
     const [key, specialty] = (ctx.match as string).trim().split(/\s+/);
-    if (!key) return ctx.reply("Формат: /bind <проект> <раздел>\nПроекты: entrium, mystep, ryan, sevencore, cargogpt, all\nРазделы: all, idea, script, shoot, edit, published, design");
+    if (!key) return ctx.reply("Формат: /bind <проект> <раздел>\nПроекты: ключ проекта или all\nРазделы: all, idea, script, shoot, edit, published, design\n\nГруппа всей команды (сводка задач утром и итоги вечером): /bind all team");
     const keyL = key.toLowerCase();
     let projId: number | null = null, projName = "все проекты";
     if (!["all", "*", "все"].includes(keyL)) {
@@ -201,6 +213,7 @@ export function registerV2(bot: Bot) {
       return ctx.reply("⛔ Это группа клиента. Чтобы сделать её внутренней: /unbind");
     }
     await d2.addBinding(ctx.chat.id, projId, spec);
+    if (spec === "team") return ctx.reply("✅ Это группа команды: сюда будут приходить сводка задач на день (с 10:00) и итоги дня (с 22:00).");
     await ctx.reply(`✅ Группа привязана: ${projName}`);
   });
 
