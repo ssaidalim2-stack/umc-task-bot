@@ -166,6 +166,11 @@ function rateFor(rls: PayRule[], memberId: number, kind: string, projectId: numb
 }
 async function ensurePiece(item: { id: number; project_id: number; idx: number; type: string }, kind: PieceKind): Promise<void> {
   const ref = `pc:${item.id}:${kind}`;
+  if (kind === "shoot") {
+    // видео без съёмки (в т.ч. «только таргет») — видеографу за него не начисляем
+    const fresh = await d2.getItem(item.id);
+    try { if (JSON.parse((fresh as any)?.title || "{}").no_shoot) return; } catch {}
+  }
   const { data: ex } = await supabase.from("fin_entries").select("id").eq("ref", ref).maybeSingle();
   if (ex) return;
   const [members, rls, fx] = await Promise.all([listMembers(), rules(), getRate()]);

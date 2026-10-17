@@ -5,7 +5,7 @@ import * as views from "./views";
 import * as fin from "./finance";
 import * as ideas from "./ideas";
 import { STAGE_OWNER_ROLES, STAGE_LABEL, nextStage, APPS } from "./projects";
-import { roleOf } from "./webapp";
+import { roleOf, parseItemData } from "./webapp";
 
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
 
@@ -65,7 +65,8 @@ export function registerV2(bot: Bot) {
     const id = +ctx.match![1];
     const item = await d2.getItem(id);
     if (!item) return ctx.answerCallbackQuery();
-    const nx = nextStage(item.stage);
+    let nx = nextStage(item.stage);
+    if (nx === "shoot" && parseItemData((item as any).title).no_shoot) nx = nextStage("shoot"); // без съёмки — сразу в монтаж
     if (!nx) return ctx.answerCallbackQuery({ text: "Уже опубликовано" });
     const status = nx === "published" ? "done" : "in_progress";
     await d2.updateItem(id, { stage: nx, status });

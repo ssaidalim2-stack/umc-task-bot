@@ -143,7 +143,20 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "" };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "", target_only: !!d.target_only, no_shoot: !!(d.no_shoot || d.target_only) };
+}
+// «только таргет» — видео не идёт в ленту и делается без съёмки; «без съёмки» — без съёмочного дня.
+// У таких пунктов дата/время/ответственный за съёмку не хранятся, чтобы не попадать в календарь и напоминания.
+function applyVideoFlags(d: any) {
+  d.target_only = !!d.target_only;
+  d.no_shoot = !!(d.no_shoot || d.target_only);
+  if (d.no_shoot) { d.shoot_date = ""; d.shoot_time = ""; d.shoot_manager = ""; }
+  return d;
+}
+// следующий этап видео; без съёмки этап «Снято» пропускается
+function nextVideoStage(item: { stage: string; title?: string | null }) {
+  const nx = nextStage(item.stage);
+  return nx === "shoot" && parseItemData(item.title || null).no_shoot ? nextStage("shoot") : nx;
 }
 async function hasTabAccess(userId: number, member: db.Member | null, isAdmin: boolean, tab: string): Promise<boolean> {
   if (isAdmin) return true;
@@ -485,7 +498,7 @@ export async function doAction(userId: number, action: any) {
     case "vid_adv": {
       const item = await d2.getItem(+action.id);
       if (!item) break;
-      const nx = nextStage(item.stage);
+      const nx = nextVideoStage(item as any);
       if (!nx) break;
       // публикацию от не-админа отправляем на подтверждение, не двигаем сразу
       if (nx === "published" && role !== "admin") {
@@ -755,7 +768,8 @@ export async function doAction(userId: number, action: any) {
       if (role !== "admin" && role !== "manager") return { items: [] };
       const plan = await d2.getActivePlan(+action.projectId);
       if (!plan) return { items: [] };
-      const its = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "video");
+      // видео без съёмки в календарь съёмок не предлагаем
+      const its = (await d2.listItemsByPlan(plan.id)).filter((x) => x.type === "video" && !parseItemData((x as any).title).no_shoot);
       return { items: its.map((x) => { const d = parseItemData((x as any).title); return { id: x.id, idx: x.idx, theme: d.theme || "" }; }) };
     }
     case "task_submit_file": {
@@ -888,7 +902,10 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId) };
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId),
+        // старые клиенты флаги не присылают — тогда сохраняем то, что уже было
+        target_only: "target_only" in f ? !!f.target_only : !!prevData0.target_only, no_shoot: "no_shoot" in f ? !!f.no_shoot : !!prevData0.no_shoot };
+      applyVideoFlags(data);
       const patch: any = { title: JSON.stringify(data) };
       if (f.format !== undefined) patch.format = f.format || null;
       if (f.type) patch.type = f.type;
@@ -907,7 +924,8 @@ export async function doAction(userId: number, action: any) {
       const d = parseItemData((it as any).title);
       if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const p = action.patch || {};
-      for (const k of ["theme", "script", "reference", "props", "location", "shoot_date", "shoot_time", "shoot_manager", "deadline"]) if (k in p) (d as any)[k] = p[k];
+      for (const k of ["theme", "script", "reference", "props", "location", "shoot_date", "shoot_time", "shoot_manager", "deadline", "target_only", "no_shoot"]) if (k in p) (d as any)[k] = p[k];
+      applyVideoFlags(d);
       d.last_edited_by = member?.name || String(userId);
       const patch: any = { title: JSON.stringify(d) };
       if (p.format !== undefined) patch.format = p.format || null;
@@ -1146,6 +1164,7 @@ export async function doAction(userId: number, action: any) {
         if (!it) continue;
         const d = parseItemData((it as any).title);
         if (d.locked && !isAdmin) { skippedLocked++; continue; }
+        if (d.no_shoot) continue;
         d.shoot_date = shoot_date; d.shoot_time = shoot_time; d.shoot_manager = shoot_manager;
         d.last_edited_by = member?.name || String(userId);
         await d2.updateItem(id, { title: JSON.stringify(d) });

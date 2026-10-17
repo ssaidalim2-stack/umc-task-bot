@@ -817,14 +817,14 @@ let TBL_PROJ=null, TBL_PLAN=null, TBL_ITEMS=null, TBL_OPEN=null, TBL_LOADED=null
 // снимки делаются ПЕРЕД каждым автосохранением, поэтому «Отменить» всегда возвращает
 // к состоянию, которое уже лежит на сервере, — откат тоже сохраняется
 let AS_TIMER=null, AS_STATE='', AS_ITEM=null, UNDO=[], AS_LAST=0;
-const AS_FIELDS=['theme','script','reference','props','location','shoot_date','deadline','lang','format','stage','type'];
+const AS_FIELDS=['theme','script','reference','props','location','shoot_date','deadline','lang','format','stage','type','target_only','no_shoot'];
 function itemSnapshot(it){ const o={}; AS_FIELDS.forEach(k=>o[k]=it[k]||''); o.frames=JSON.parse(JSON.stringify(it.frames||[])); return o; }
 function applySnapshot(it,snap){ AS_FIELDS.forEach(k=>it[k]=snap[k]); it.frames=JSON.parse(JSON.stringify(snap.frames||[])); }
 function itemFingerprint(it){ return JSON.stringify(itemSnapshot(it)); }
 function autosaveFields(it){
   return {type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme:it.theme||'',script:it.script||'',
           frames:it.frames||[],reference:it.reference||'',props:it.props||'',location:it.location||'',
-          shoot_date:it.shoot_date||'',deadline:it.deadline||''};
+          shoot_date:it.shoot_date||'',deadline:it.deadline||'',target_only:!!it.target_only,no_shoot:!!it.no_shoot};
 }
 function setSaveHint(text,cls){ const e=document.getElementById('saveHint'); if(e){ e.textContent=text; e.style.color=cls||'var(--muted)'; } }
 // сохраняем через 1.5 с после последнего изменения (а не на каждую букву)
@@ -878,10 +878,15 @@ function typeNumbers(items){
   return out;
 }
 function typeBadge(it,n){ const k=TYPE_NAME[it.type]?it.type:'video'; return `<span class="tb tb-${k}">${TYPE_ICON[k]} ${TYPE_NAME[k]}${n?' '+n:''}</span>`; }
-function STATUS_OPTS(type){ return type==='video'
-  ? [["idea","🕒 В плане"],["script","📝 Сценарий готов"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]]
-  : [["todo","🕒 В работе"],["done","✅ Готово"]]; }
-function statusLabel(type,stage){ const o=STATUS_OPTS(type).find(x=>x[0]==stage); return o?o[1]:stage; }
+// it — сам пункт (необязательно): без съёмки нет этапа «Снято», у «только таргет» финал — «В таргете»
+function STATUS_OPTS(type,it){
+  if(type!=='video') return [["todo","🕒 В работе"],["done","✅ Готово"]];
+  let o=[["idea","🕒 В плане"],["script","📝 Сценарий готов"],["shoot","🎥 Снято"],["edit","✂️ Смонтировано"],["published","✅ Опубликовано"]];
+  if(it&&it.no_shoot&&it.stage!=='shoot') o=o.filter(x=>x[0]!=='shoot');
+  if(it&&it.target_only) o=o.map(x=>x[0]==='published'?["published","🎯 В таргете"]:x);
+  return o;
+}
+function statusLabel(type,stage,it){ const o=STATUS_OPTS(type,it).find(x=>x[0]==stage); return o?o[1]:stage; }
 const LANG_OPTS=[["ru","🇷🇺 Рус"],["uz","🇺🇿 Узб"],["en","🇬🇧 Англ"]];
 const FORMAT_OPTS=[["sell","💰 Продажный"],["fun","🎉 Развлекательный"],["info","📘 Информативный"],["atmo","🌙 Атмосферный"]];
 function formatLabel(f){ const o=FORMAT_OPTS.find(x=>x[0]===f); return o?o[1]:''; }
@@ -910,8 +915,10 @@ function buildFullScriptText(it,includeExtras){
   const head=[];
   if(projName) head.push('Проект: '+projName);
   if(it.theme&&it.theme.trim()) head.push('Тема: '+it.theme.trim());
-  if(it.shoot_date&&it.shoot_date.trim()) head.push('Дата съёмки: '+it.shoot_date.trim()+(it.shoot_time?' '+it.shoot_time:''));
-  if(it.deadline&&it.deadline.trim()) head.push('Дедлайн на публикацию: '+it.deadline.trim());
+  if(it.target_only) head.push('Размещение: только таргет (в ленту не публикуется)');
+  else if(it.type==='video'&&it.no_shoot) head.push('Без съёмки — из готовых материалов');
+  if(!it.no_shoot&&it.shoot_date&&it.shoot_date.trim()) head.push('Дата съёмки: '+it.shoot_date.trim()+(it.shoot_time?' '+it.shoot_time:''));
+  if(it.deadline&&it.deadline.trim()) head.push((it.target_only?'Дедлайн запуска в таргет: ':'Дедлайн на публикацию: ')+it.deadline.trim());
   const plain=s=>String(s||'').replace(/^\S+\s/,''); // отрезать эмодзи-префикс из подписи
   const vk=it.type==='video'?' видео':'';
   if(it.format) head.push('Формат'+vk+': '+plain(formatLabel(it.format)));
@@ -1210,13 +1217,13 @@ function rowHtml(it,pos,n){
   const theme=(it.theme||'').trim();
   const body=theme?esc(theme):'<span class="muted">без темы</span>';
   const dl=canEdit()
-    ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="дедлайн">`
+    ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="${it.target_only?'запуск':'публикация'}" title="${it.target_only?'Дедлайн запуска в таргет':'Дедлайн публикации'}">`
     : (it.deadline?`<span class="chip">⏰ ${esc(it.deadline)}</span>`:'');
   const mv=canEdit()?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
   const lg=it.lang?`<span class="chip">${LANG_SHORT[it.lang]||it.lang}</span>`:'';
   const sel=`<input type="checkbox" data-tsel="${it.id}" ${TBL_SELECTED.has(it.id)?'checked':''} title="Выбрать для группового копирования" style="margin-right:2px">`;
   const k=TYPE_NAME[it.type]?it.type:'video';
-  return `<div class="vid trow trow-${k}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage)}</span>${mv}</div></div>`;
+  return `<div class="vid trow trow-${k}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)}${it.target_only?' <span class="tb" style="background:rgba(234,88,12,.18);color:#f97316">🎯 Таргет</span>':it.no_shoot&&it.type==='video'?' <span class="tb" style="background:rgba(127,127,127,.18);color:var(--hint)">без съёмки</span>':''} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage,it)}</span>${mv}</div></div>`;
 }
 
 function renderFrames(it){
@@ -1284,7 +1291,7 @@ function renderItemDetail(){
   const it=(TBL_ITEMS||[]).find(x=>x.id==TBL_OPEN);
   if(!it){ TBL_OPEN=null; return renderTable(); }
   const typePills=TYPE_OPTS.map(([k,l])=>`<div class="pill ${it.type==k?'active':''}" data-titype="${k}">${l}</div>`).join('');
-  const statusPills=STATUS_OPTS(it.type).map(([k,l])=>`<div class="pill ${it.stage==k?'active':''}" data-tstatus="${k}">${l}</div>`).join('');
+  const statusPills=STATUS_OPTS(it.type,it).map(([k,l])=>`<div class="pill ${it.stage==k?'active':''}" data-tstatus="${k}">${l}</div>`).join('');
   const isVideo=it.type==='video', isGfx=it.type==='graphic';
   const scriptLabel=isVideo?'Сценарий':isGfx?'Текст на макете (заголовок, подзаголовок, оффер)':'Описание / подписи к фото';
   const vis=(TBL_ITEMS||[]).filter(x=>x.type!=='story').sort((a,b)=>a.idx-b.idx);
@@ -1313,13 +1320,18 @@ function renderItemDetail(){
     </div>
     <div class="sp-extra">
     <div class="muted">Референс:</div><textarea id="f_reference" style="min-height:52px" ${ro}>${esc(it.reference)}</textarea>
+    ${isVideo?`<div style="margin:2px 0 8px;padding:8px 10px;border-radius:10px;background:rgba(127,127,127,.1)">
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" data-tflag="target_only" ${it.target_only?'checked':''} ${ro}> 🎯 Только таргет <span class="muted" style="font-size:12px">— в ленту не публикуется</span></label>
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin-top:6px"><input type="checkbox" data-tflag="no_shoot" ${it.no_shoot?'checked':''} ${it.target_only?'disabled':ro}> 🚫 Без съёмки <span class="muted" style="font-size:12px">— делается из готовых материалов</span></label>
+    </div>`:''}
     ${isGfx
       // у граф-поста нет съёмки: вместо реквизитов — пожелания по дизайну (то же поле в базе)
       ?`<div class="muted">Стиль, цвета, шрифты, размер:</div><textarea id="f_props" style="min-height:52px" placeholder="напр. 4:5, фирменный синий, крупный заголовок" ${ro}>${esc(it.props)}</textarea>`
+      :(isVideo&&it.no_shoot)?''
       :`<div class="muted">Реквизиты:</div><textarea id="f_props" style="min-height:52px" ${ro}>${esc(it.props)}</textarea>
     <div class="muted">Локация съёмки:</div><input id="f_location" value="${esc(it.location||'')}" placeholder="где снимаем" ${ro}>`}
-    ${isVideo?`<div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}`:''}
-    <div class="muted" style="margin-top:8px">${isVideo?'Дедлайн':'Дедлайн публикации'}:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}
+    ${isVideo&&!it.no_shoot?`<div class="muted">Дата съёмки:</div>${pickerPair('f_shoot',it.shoot_date,'ДД.ММ',false,ro)}`:''}
+    <div class="muted" style="margin-top:8px">${isVideo?(it.target_only?'Дедлайн запуска в таргет':'Дедлайн публикации видео'):'Дедлайн публикации'}:</div>${pickerPair('f_deadline',it.deadline,'ДД.ММ',true,ro)}
     <div class="muted" style="margin-top:8px">Статус:</div><div class="pills">${statusPills}</div>
     ${canEdit()&&!lockedForMe?`<button class="btn full" data-tsave="${it.id}">💾 Сохранить и закрыть</button>
     <button class="btn full sec" data-tzsend="${it.id}" style="margin-top:6px">📨 Отправить ТЗ ${it.type==='video'?'монтажёру':'дизайнеру'}</button>
@@ -1546,7 +1558,7 @@ function drawPlanImage(r){
   // карточки
   items.forEach((it,i)=>{
     const x=pad+(i%cols)*(cardW+gap), y=top+Math.floor(i/cols)*(cardH+gap);
-    const [stLabel,stColor]=CR_ST[it.stage]||[it.stage,'#64748b'];
+    const [stLabel,stColor]=it.target_only&&it.stage==='published'?['Запущено в таргет','#ea580c']:(CR_ST[it.stage]||[it.stage,'#64748b']);
     const fin=it.stage==='published'||it.stage==='done';
     ctx.fillStyle=fin?'#f0fdf4':'#ffffff'; crRound(ctx,x,y,cardW,cardH,18); ctx.fill();
     ctx.strokeStyle=fin?'#bbf7d0':'#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
@@ -1562,6 +1574,7 @@ function drawPlanImage(r){
     ctx.fillStyle=stColor; crRound(ctx,x+28,y+cardH-52,sw,34,17); ctx.fill();
     ctx.fillStyle='#ffffff'; ctx.fillText(stLabel,x+42,y+cardH-28);
     let cx=x+28+sw+10;
+    if(it.target_only){ ctx.font=`700 20px ${CR_FONT}`; const tw2=ctx.measureText('ТАРГЕТ').width+24; ctx.fillStyle='#ffedd5'; crRound(ctx,cx,y+cardH-52,tw2,34,17); ctx.fill(); ctx.fillStyle='#c2410c'; ctx.fillText('ТАРГЕТ',cx+12,y+cardH-28); cx+=tw2+10; }
     if(CR_LANG[it.lang]){ const lw=ctx.measureText(CR_LANG[it.lang]).width+24; ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-52,lw,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(CR_LANG[it.lang],cx+12,y+cardH-28); cx+=lw+10; }
   });
   if(!items.length){ ctx.fillStyle='#64748b'; ctx.font=`600 28px ${CR_FONT}`; ctx.fillText('В этом периоде пока нет пунктов',pad,top+60); }
@@ -3191,20 +3204,25 @@ function bind(){
     TBL_OPEN=null; UNDO=[]; render();
   };
   document.querySelectorAll('[data-titype]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.type=b.dataset.titype; if(!STATUS_OPTS(it.type).some(s=>s[0]==it.stage)) it.stage=STATUS_OPTS(it.type)[0][0];} render(); scheduleAutosave();});
+  document.querySelectorAll('[data-tflag]').forEach(b=>b.onchange=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return; captureFields(it);
+    it[b.dataset.tflag]=b.checked;
+    if(it.target_only) it.no_shoot=true;            // только таргет — всегда без съёмки
+    if(it.no_shoot){ it.shoot_date=''; if(it.stage==='shoot') it.stage='edit'; }
+    render(); scheduleAutosave();});
   document.querySelectorAll('[data-tstatus]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.stage=b.dataset.tstatus;} render(); scheduleAutosave();});
   document.querySelectorAll('[data-tlang]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.lang=(it.lang===b.dataset.tlang?'':b.dataset.tlang);} render(); scheduleAutosave();});
   document.querySelectorAll('[data-tformat]').forEach(b=>b.onclick=()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(it){captureFields(it); it.format=(it.format===b.dataset.tformat?'':b.dataset.tformat);} render(); scheduleAutosave();});
   document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>act({type:'item_add',planId:TBL_PLAN,projectId:TBL_PROJ,itemType:b.dataset.tadd}));
   document.querySelectorAll('[data-tview]').forEach(b=>b.onclick=()=>{TBL_VIEW=b.dataset.tview;try{localStorage.setItem('umc_tbl_view',TBL_VIEW);}catch(e){}render();});
   document.querySelectorAll('[data-tlock]').forEach(b=>b.onclick=()=>act({type:'item_lock',id:+b.dataset.tlock,planId:TBL_PLAN}));
-  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; captureFields(it); const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme:it.theme||'',script:it.script||'',frames:it.frames||[],reference:it.reference||'',props:it.props||'',location:it.location||'',shoot_date:it.shoot_date||'',deadline:it.deadline||''}; let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;} if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
+  const tsave=document.querySelector('[data-tsave]'); if(tsave) tsave.onclick=()=>busyClick(tsave, async()=>{const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script'); const newPos=parseInt(val('f_pos'))||it.idx; captureFields(it); const fields=autosaveFields(it); let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;} if(newPos!==it.idx){ res=await api('POST',{type:'item_move',id:it.id,planId:TBL_PLAN,toPos:newPos}); } if(res&&res.items)TBL_ITEMS=res.items; TBL_OPEN=null; render();});
   const tzsend=document.querySelector('[data-tzsend]'); if(tzsend) tzsend.onclick=()=>busyClick(tzsend, async()=>{
     const it=TBL_ITEMS.find(x=>x.id==TBL_OPEN); if(!it) return;
     captureFields(it);
     const theme=it.theme||'', script=it.script||'', reference=it.reference||'', props=it.props||'', deadline=it.deadline||'';
     if(!theme.trim()||!script.trim()){tg.showAlert&&tg.showAlert('Заполни тему и текст/сценарий перед отправкой ТЗ');return;}
     if(!deadline.trim()){tg.showAlert&&tg.showAlert('Укажи дедлайн — бот подставит его в ТЗ автоматически');return;}
-    const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme,script,frames:it.frames||[],reference,props,location:it.location||'',shoot_date:it.shoot_date||'',deadline};
+    const fields=autosaveFields(it);
     let res=await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
     if(res&&res.error){tg.showAlert&&tg.showAlert(res.error); if(res.items)TBL_ITEMS=res.items; render(); return;}
     if(res&&res.items)TBL_ITEMS=res.items;
@@ -3220,7 +3238,7 @@ function bind(){
     captureFrames(it); if(document.getElementById('f_script')) it.script=val('f_script');
     const script=it.script||'';
     if(!script.trim()){tg.showAlert&&tg.showAlert('Сначала заполни сценарий');return;}
-    const fields={type:it.type,status:it.stage,lang:it.lang||'',format:it.format||'',theme:val('f_theme'),script,frames:it.frames||[],reference:val('f_reference'),props:val('f_props'),location:val('f_location'),shoot_date:it.type==='video'?val('f_shoot'):'',deadline:val('f_deadline')};
+    captureFields(it); const fields=autosaveFields(it);
     await api('POST',{type:'item_update',id:it.id,planId:TBL_PLAN,fields});
     const prevTxt=airaska.textContent; airaska.textContent='⏳ Генерирую раскадровку…'; airaska.disabled=true;
     const res=await api('POST',{type:'item_ai_tz',id:it.id,planId:TBL_PLAN,script});
