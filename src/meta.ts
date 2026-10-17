@@ -1,15 +1,29 @@
 // Meta (Instagram Insights + Facebook Ads) — подтягивание цифр в отчёты.
-// Требует env: META_TOKEN (long-lived user/system token).
+// Токен: из настроек бота (app_settings "meta_token", задаётся в приложении), иначе env META_TOKEN.
+// Лучше всего — бессрочный токен системного пользователя из Business Manager: личный
+// токен живёт 60 дней и однажды уже молча протух.
 // Привязка аккаунтов к проектам хранится в app_settings key "meta_map":
 //   { "<projectKey>": { "ig": "<ig_user_id>", "ad": "act_<ad_account_id>" } }
 // Дневные снэпшоты кэшируются в app_settings key "meta_stats:<YYYY-MM-DD>".
 import { getSetting, setSetting } from "./db2";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
-const TOKEN = process.env.META_TOKEN || "";
+const ENV_TOKEN = process.env.META_TOKEN || "";
+// права, без которых часть аналитики будет пустой
+const NEEDED_SCOPES = ["ads_read", "read_insights", "instagram_basic", "instagram_manage_insights", "pages_show_list", "pages_read_engagement", "business_management"];
 
-async function gget(path: string, params: Record<string, string> = {}): Promise<any> {
-  const qs = new URLSearchParams({ ...params, access_token: TOKEN }).toString();
+// токен читается из базы, но не на каждый из десятков запросов к Graph за один отчёт
+let tokenCache: { v: string; t: number } | null = null;
+async function getToken(): Promise<string> {
+  if (tokenCache && Date.now() - tokenCache.t < 60000) return tokenCache.v;
+  let v = "";
+  try { v = ((await getSetting("meta_token")) || "").trim(); } catch {}
+  tokenCache = { v: v || ENV_TOKEN, t: Date.now() };
+  return tokenCache.v;
+}
+
+async function gget(path: string, params: Record<string, string> = {}, token?: string): Promise<any> {
+  const qs = new URLSearchParams({ ...params, access_token: token ?? (await getToken()) }).toString();
   const res = await fetch(`${GRAPH}${path}?${qs}`);
   const j: any = await res.json().catch(() => ({}));
   if (j.error) {
@@ -27,22 +41,40 @@ async function gget(path: string, params: Record<string, string> = {}): Promise<
 // Живая проверка токена: кто мы и что видим. Возвращает человекочитаемый диагноз,
 // а не пустые списки — именно из-за молчаливых пустых списков протухший токен
 // полтора месяца выглядел как «аккаунтов нет».
-export async function tokenCheck(): Promise<{ ok: boolean; who?: string; scopes?: string[]; error?: string }> {
-  if (!TOKEN) return { ok: false, error: "META_TOKEN не задан в переменных окружения" };
+// expiresAt — мс, null если токен бессрочный (или срок не удалось узнать)
+export interface TokenStatus { ok: boolean; who?: string; scopes?: string[]; missing?: string[]; expiresAt?: number | null; error?: string }
+export async function tokenCheck(tokenIn?: string): Promise<TokenStatus> {
+  const token = tokenIn ?? (await getToken());
+  if (!token) return { ok: false, error: "Токен Meta не задан" };
   try {
-    const me = await gget("/me", { fields: "id,name" });
+    const me = await gget("/me", { fields: "id,name" }, token);
     let scopes: string[] = [];
+    let expiresAt: number | null = null;
     try {
-      const d = await gget("/debug_token", { input_token: TOKEN });
+      const d = await gget("/debug_token", { input_token: token }, token);
       scopes = d?.data?.scopes || [];
+      const exp = +(d?.data?.expires_at || 0);
+      expiresAt = exp > 0 ? exp * 1000 : null;
     } catch { /* не критично */ }
-    return { ok: true, who: me.name || me.id, scopes };
+    const missing = scopes.length ? NEEDED_SCOPES.filter((s) => !scopes.includes(s)) : [];
+    return { ok: true, who: me.name || me.id, scopes, missing, expiresAt };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || e) };
   }
 }
 
-export function metaConfigured(): boolean { return !!TOKEN; }
+// новый токен из приложения: сохраняем только проверенный, чтобы не затереть рабочий битым
+export async function setToken(token: string): Promise<TokenStatus> {
+  const t = token.trim();
+  if (!t) return { ok: false, error: "Вставь токен" };
+  const st = await tokenCheck(t);
+  if (!st.ok) return st;
+  await setSetting("meta_token", t);
+  tokenCache = null;
+  return st;
+}
+
+export async function metaConfigured(): Promise<boolean> { return !!(await getToken()); }
 
 // ---------- привязка проектов ----------
 export interface MetaMap { [projectKey: string]: { ig?: string; ad?: string } }

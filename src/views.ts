@@ -172,7 +172,7 @@ export async function buildClientReport(projectId: number, note: string): Promis
   const bind = map[proj.key] || {};
   const [since, until] = cycleRange();
 
-  if (meta.metaConfigured() && bind.ad) {
+  if (bind.ad && (await meta.metaConfigured())) {
     try {
       const camps = await meta.campaignStats(bind.ad, since, until);
       const active = camps.filter((c) => /ACTIVE/i.test(c.status));
@@ -188,7 +188,7 @@ export async function buildClientReport(projectId: number, note: string): Promis
     } catch { /* нет данных — блока просто не будет, клиенту не показываем кухню */ }
   }
 
-  if (meta.metaConfigured() && bind.ig) {
+  if (bind.ig && (await meta.metaConfigured())) {
     try {
       const media = await meta.igMediaStats(bind.ig, since, until);
       const recent = media.slice(0, 5);
