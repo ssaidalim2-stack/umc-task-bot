@@ -1527,17 +1527,39 @@ function crWrap(ctx,text,maxW,maxLines){
   return lines;
 }
 function crDate(iso){ return iso?iso.split('-').reverse().slice(0,2).join('.'):''; }
+// съёмочные дни: факт (снято) и план (дата стоит, ещё не снято) — по дням со счётом роликов
+function crShootDays(items){
+  const done=new Map(), planned=new Map(); let undated=0;
+  for(const it of items){
+    if(it.type!=='video'||it.no_shoot||it.target_only) continue;
+    const shot=['shoot','edit','published'].includes(it.stage);
+    if(shot&&it.shotDay) done.set(it.shotDay,(done.get(it.shotDay)||0)+1);
+    else if(shot) undated++;
+    else if(it.shootDay) planned.set(it.shootDay,(planned.get(it.shootDay)||0)+1);
+  }
+  const srt=m=>[...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  return {done:srt(done),planned:srt(planned),undated};
+}
 function drawPlanImage(r){
   const items=r.items||[];
   // лента — основная сетка; «только таргет» в ленту не выходят, поэтому отдельным блоком внизу
   const feed=items.filter(x=>!x.target_only), tgt=items.filter(x=>x.target_only);
   const videos=feed.filter(x=>x.type==='video'), gfx=feed.filter(x=>x.type!=='video');
   const c=s=>videos.filter(v=>v.stage===s).length;
-  const W=1600, pad=64, cols=4, gap=22, cardH=214;
+  const W=1600, pad=64, cols=4, gap=22, cardH=252;
   const cardW=Math.floor((W-2*pad-(cols-1)*gap)/cols);
   const gridH=n=>Math.max(1,Math.ceil(n/cols))*(cardH+gap);
-  const top=560, tgtTop=top+gridH(feed.length)+40;
-  const H=(tgt.length?tgtTop+90+gridH(tgt.length):top+gridH(feed.length))+110;
+  // чипы съёмочных дней раскладываем заранее — от их числа строк зависит высота картинки
+  const sd=crShootDays(items);
+  const meas=document.createElement('canvas').getContext('2d'); meas.font=`700 22px ${CR_FONT}`;
+  const chips=[...sd.done.map(([d,n])=>({t:`✓ ${crDate(d)} · ${n} видео`,k:'done'})),
+    ...(sd.undated?[{t:`снято без даты · ${sd.undated}`,k:'none'}]:[]),
+    ...sd.planned.map(([d,n])=>({t:`${crDate(d)} · ${n} видео`,k:'plan'}))];
+  let cx0=pad, cy0=0;
+  chips.forEach(ch=>{ ch.w=meas.measureText(ch.t).width+32; if(cx0+ch.w>W-pad){ cx0=pad; cy0+=54; } ch.x=cx0; ch.dy=cy0; cx0+=ch.w+12; });
+  const sdTop=490, sdH=chips.length?56+cy0+44+50:0;
+  const head=sdTop+sdH+30, top=head+40, tgtTop=top+gridH(feed.length)+40;
+  const H=(tgt.length?tgtTop+90+gridH(tgt.length):top+gridH(feed.length))+90;
   const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
   const ctx=cv.getContext('2d'); ctx.textBaseline='alphabetic';
   ctx.fillStyle='#f1f5f9'; ctx.fillRect(0,0,W,H);
@@ -1550,39 +1572,64 @@ function drawPlanImage(r){
   ctx.fillStyle='rgba(255,255,255,.85)'; ctx.font=`500 28px ${CR_FONT}`;
   ctx.fillText(crWrap(ctx,(r.period?r.period+'  ·  ':'')+'статус на '+today,W-2*pad,1)[0]||'',pad,200);
   // итоги
-  const tiles=[[`${c('published')}/${videos.length}`,'видео опубликовано','#16a34a'],[String(c('edit')),'смонтировано','#2563eb'],[String(c('shoot')),'снято, в монтаже','#7c3aed'],[String(c('script')),'сценарии готовы','#d97706'],
-    gfx.length?[`${gfx.filter(g=>g.stage==='done').length}/${gfx.length}`,'графика готова','#db2777']:[String(c('idea')),'в плане','#64748b']];
+  const tiles=[[`${c('published')}/${videos.length}`,'видео опубликовано','#16a34a'],[String(c('edit')),'смонтировано','#2563eb'],[String(c('shoot')),'снято, в монтаже','#7c3aed'],[String(sd.done.length),'съёмочных дней','#0891b2'],
+    gfx.length?[`${gfx.filter(g=>g.stage==='done').length}/${gfx.length}`,'графика готова','#db2777']:[String(c('script')),'сценарии готовы','#d97706']];
   const tw=Math.floor((W-2*pad-4*gap)/5);
   tiles.forEach(([v,l,col],i)=>{
     const x=pad+i*(tw+gap), y=272;
     ctx.fillStyle='#ffffff'; crRound(ctx,x,y,tw,132,18); ctx.fill(); ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
     ctx.fillStyle=col; ctx.font=`800 52px ${CR_FONT}`; ctx.fillText(v,x+24,y+70);
-    ctx.fillStyle='#475569'; ctx.font=`600 22px ${CR_FONT}`; ctx.fillText(l,x+24,y+108);
+    ctx.fillStyle='#475569'; ctx.font=`600 22px ${CR_FONT}`; ctx.fillText(crWrap(ctx,l,tw-40,1)[0]||'',x+24,y+108);
   });
   // прогресс
   const pct=videos.length?Math.round(c('published')/videos.length*100):0;
   ctx.fillStyle='#e2e8f0'; crRound(ctx,pad,438,W-2*pad,18,9); ctx.fill();
   if(pct){ ctx.fillStyle='#16a34a'; crRound(ctx,pad,438,Math.max(18,(W-2*pad)*pct/100),18,9); ctx.fill(); }
-  ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('Статус по контенту',pad,520);
-  ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const pt=`опубликовано ${pct}% видео`; ctx.fillText(pt,W-pad-ctx.measureText(pt).width,520);
+  // съёмочные дни: зелёные — уже снимали (факт), контурные — запланированы
+  if(chips.length){
+    ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('Съёмочные дни',pad,sdTop+30);
+    ctx.fillStyle='#64748b'; ctx.font=`600 22px ${CR_FONT}`;
+    const leg=[sd.done.length?`факт: ${sd.done.length}`:'',sd.planned.length?`запланировано: ${sd.planned.length}`:''].filter(Boolean).join('  ·  ');
+    ctx.fillText(leg,W-pad-ctx.measureText(leg).width,sdTop+30);
+    ctx.font=`700 22px ${CR_FONT}`;
+    chips.forEach(ch=>{ const y=sdTop+56+ch.dy;
+      crRound(ctx,ch.x,y,ch.w,44,22);
+      if(ch.k==='done'){ ctx.fillStyle='#0891b2'; ctx.fill(); ctx.fillStyle='#ffffff'; }
+      else if(ch.k==='none'){ ctx.fillStyle='#e2e8f0'; ctx.fill(); ctx.fillStyle='#475569'; }
+      else { ctx.fillStyle='#ffffff'; ctx.fill(); ctx.strokeStyle='#0891b2'; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle='#0e7490'; }
+      ctx.fillText(ch.t,ch.x+16,y+30); });
+  }
+  ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('Статус по контенту',pad,head);
+  ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const pt=`опубликовано ${pct}% видео`; ctx.fillText(pt,W-pad-ctx.measureText(pt).width,head);
+  // текст в одну строку, который не влезает в ширину, — уменьшаем шрифт, а не даём наехать на соседа
+  const fit=(t,weight,size,maxW)=>{ let z=size; ctx.font=`${weight} ${z}px ${CR_FONT}`; while(z>14&&ctx.measureText(t).width>maxW){ z--; ctx.font=`${weight} ${z}px ${CR_FONT}`; } return ctx.measureText(t).width; };
   const card=(it,i,y0,label)=>{
-    const x=pad+(i%cols)*(cardW+gap), y=y0+Math.floor(i/cols)*(cardH+gap);
+    const x=pad+(i%cols)*(cardW+gap), y=y0+Math.floor(i/cols)*(cardH+gap), inner=cardW-48;
     const [stLabel,stColor]=it.target_only&&it.stage==='published'?['Запущено в таргет','#ea580c']:(CR_ST[it.stage]||[it.stage,'#64748b']);
     const fin=it.stage==='published'||it.stage==='done';
     ctx.fillStyle=fin?(it.target_only?'#fff7ed':'#f0fdf4'):'#ffffff'; crRound(ctx,x,y,cardW,cardH,18); ctx.fill();
     ctx.strokeStyle=fin?(it.target_only?'#fed7aa':'#bbf7d0'):'#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
     ctx.save(); crRound(ctx,x,y,cardW,cardH,18); ctx.clip(); ctx.fillStyle=stColor; ctx.fillRect(x,y,10,cardH); ctx.restore();
-    ctx.fillStyle=it.target_only?'#ea580c':'#94a3b8'; ctx.font=`800 20px ${CR_FONT}`; ctx.fillText(label,x+28,y+40);
-    // дата выхода — в правом верхнем углу: внизу её вытесняли длинный статус и язык
-    if(!fin&&it.publishDay){ ctx.fillStyle='#475569'; ctx.font=`700 20px ${CR_FONT}`; const dt=(it.target_only?'запуск ':'выход ')+crDate(it.publishDay); ctx.fillText(dt,x+cardW-20-ctx.measureText(dt).width,y+40); }
+    // шапка: номер слева, дата выхода справа — без наложения
+    ctx.font=`800 20px ${CR_FONT}`; const lw=ctx.measureText(label).width;
+    let dt=(!fin&&it.publishDay)?(it.target_only?'запуск ':'выход ')+crDate(it.publishDay):'';
+    if(dt){ ctx.font=`700 20px ${CR_FONT}`; if(lw+16+ctx.measureText(dt).width>inner) dt=crDate(it.publishDay); }
+    ctx.font=`700 20px ${CR_FONT}`; const dw=dt?ctx.measureText(dt).width:0;
+    ctx.fillStyle=it.target_only?'#ea580c':'#94a3b8'; fit(label,800,20,dt?inner-16-dw:inner); ctx.fillText(label,x+28,y+40);
+    if(dt){ ctx.fillStyle='#475569'; ctx.font=`700 20px ${CR_FONT}`; ctx.fillText(dt,x+28+inner-ctx.measureText(dt).width,y+40); }
     ctx.fillStyle='#0f172a'; ctx.font=`600 25px ${CR_FONT}`;
-    crWrap(ctx,it.theme||'Тема уточняется',cardW-52,3).forEach((ln,k)=>ctx.fillText(ln,x+28,y+78+k*32));
-    // статус + язык
-    ctx.font=`700 20px ${CR_FONT}`; const sw=ctx.measureText(stLabel).width+28;
-    ctx.fillStyle=stColor; crRound(ctx,x+28,y+cardH-52,sw,34,17); ctx.fill();
-    ctx.fillStyle='#ffffff'; ctx.fillText(stLabel,x+42,y+cardH-28);
-    const cx=x+28+sw+10;
-    if(CR_LANG[it.lang]){ const lw=ctx.measureText(CR_LANG[it.lang]).width+24; ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-52,lw,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(CR_LANG[it.lang],cx+12,y+cardH-28); }
+    crWrap(ctx,it.theme||'Тема уточняется',inner,3).forEach((ln,k)=>ctx.fillText(ln,x+28,y+78+k*32));
+    // день съёмки: факт — «снято», план — «съёмка»
+    const sh=it.type==='video'&&!it.no_shoot?(it.shotDay?'🎥 снято '+crDate(it.shotDay):it.shootDay&&!['shoot','edit','published'].includes(it.stage)?'📅 съёмка '+crDate(it.shootDay):''):'';
+    if(sh){ ctx.fillStyle=it.shotDay?'#0e7490':'#64748b'; ctx.font=`700 19px ${CR_FONT}`; ctx.fillText(sh,x+28,y+cardH-68); }
+    // статус + язык: язык не влез — не рисуем, статус не влез — уменьшаем
+    const sw=fit(stLabel,700,20,inner-28)+28, fnt=ctx.font;
+    ctx.fillStyle=stColor; crRound(ctx,x+28,y+cardH-50,sw,34,17); ctx.fill();
+    ctx.fillStyle='#ffffff'; ctx.fillText(stLabel,x+42,y+cardH-26);
+    const cx=x+28+sw+10, lg=CR_LANG[it.lang];
+    ctx.font=`700 20px ${CR_FONT}`;
+    if(lg){ const lw2=ctx.measureText(lg).width+24; if(cx+lw2<=x+cardW-16){ ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-50,lw2,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(lg,cx+12,y+cardH-26); } }
+    ctx.font=fnt;
   };
   const KIND={video:'ВИДЕО',photo:'ФОТО'};
   feed.forEach((it,i)=>card(it,i,top,`${i+1}: ${KIND[it.type]||'ГРАФ-ПОСТ'} ${it.num||it.idx}`));
@@ -1594,7 +1641,7 @@ function drawPlanImage(r){
     ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const tt=`запущено ${run} из ${tgt.length}`; ctx.fillText(tt,W-pad-ctx.measureText(tt).width,tgtTop+56);
     tgt.forEach((it,i)=>card(it,i,tgtTop+90,`ТАРГЕТ ${it.num||i+1}`));
   }
-  ctx.fillStyle='#94a3b8'; ctx.font=`700 22px ${CR_FONT}`; const ft='UMC marketing team'; ctx.fillText(ft,W-pad-ctx.measureText(ft).width,H-44);
+  ctx.fillStyle='#94a3b8'; ctx.font=`700 22px ${CR_FONT}`; const ft='UMC marketing team'; ctx.fillText(ft,W-pad-ctx.measureText(ft).width,H-40);
   return cv.toDataURL('image/png');
 }
 function renderClientReport(){

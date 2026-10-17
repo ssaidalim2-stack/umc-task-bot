@@ -925,7 +925,7 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId),
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", shot_at: prevData0.shot_at || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId),
         // старые клиенты флаги не присылают — тогда сохраняем то, что уже было
         target_only: "target_only" in f ? !!f.target_only : !!prevData0.target_only, no_shoot: "no_shoot" in f ? !!f.no_shoot : !!prevData0.no_shoot };
       applyVideoFlags(data);

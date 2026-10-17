@@ -120,7 +120,7 @@ export async function buildReport(title: string): Promise<{ text: string; chartU
 // всё равно должен уйти, просто без этих строк: цифры клиенту важны, но
 // неработающая интеграция не повод не отчитаться о проделанной работе.
 // пункты выбранного периода (по умолчанию — текущего) для отчёта клиенту: и для картинки, и для текста
-export interface ReportItem { target_only: boolean; idx: number; num: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null }
+export interface ReportItem { target_only: boolean; no_shoot: boolean; idx: number; num: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null; shotDay: string | null }
 export async function clientPlan(projectId: number, planId?: number | null): Promise<{ planId: number | null; period: string; plans: { id: number; period: string; is_active: boolean }[]; items: ReportItem[] }> {
   const { parseItemData, parseShootDay, resortPlan } = await import("./webapp");
   const plans = (await d2.getAllPlans()).filter((p) => p.project_id === projectId);
@@ -130,14 +130,36 @@ export async function clientPlan(projectId: number, planId?: number | null): Pro
   // номер внутри своего типа: «Видео 3», «Граф-пост 1», «Таргет 2» — как в Таблице.
   // «Только таргет» в ленту не выходят — идут после ленты отдельным блоком
   const counters: Record<string, number> = {};
+  const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
   const tgtOf = (it: any) => (it.type === "video" && parseItemData(it.title).target_only ? 1 : 0);
   const items: ReportItem[] = raw.sort((a, b) => tgtOf(a) - tgtOf(b) || a.idx - b.idx).map((it) => {
     const d = parseItemData((it as any).title);
     const k = it.type === "video" ? (d.target_only ? "target" : "video") : it.type === "photo" ? "photo" : "graphic";
     counters[k] = (counters[k] || 0) + 1;
-    return { target_only: !!d.target_only, idx: it.idx, num: counters[k], type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date) };
+    return { target_only: !!d.target_only, no_shoot: !!(d.no_shoot || d.target_only), idx: it.idx, num: counters[k], type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date), shotDay: shotDayOf(it, d, today, parseShootDay) };
   });
   return { planId: plan?.id ?? null, period: plan?.period || "", plans: plans.map((p) => ({ id: p.id, period: p.period, is_active: p.is_active })), items };
+}
+// фактический день съёмки: отметка, поставленная при переходе в «Снято»; у старых пунктов — плановая дата, если уже прошла
+function shotDayOf(it: { type: string; stage: string }, d: any, today: string, parse: (s: string) => string | null): string | null {
+  if (it.type !== "video" || d.no_shoot || !["shoot", "edit", "published"].includes(it.stage)) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(d.shot_at || ""))) return d.shot_at;
+  const plan = parse(d.shoot_date);
+  return plan && plan <= today ? plan : null;
+}
+// съёмочные дни для отчёта: факт (снято) и план (дата стоит, ещё не снято) — по дням со счётом роликов
+export function shootDaysOf(items: ReportItem[]): { done: [string, number][]; planned: [string, number][]; undatedShot: number } {
+  const done = new Map<string, number>(), planned = new Map<string, number>();
+  let undatedShot = 0;
+  for (const it of items) {
+    if (it.type !== "video" || it.no_shoot) continue;
+    const shot = ["shoot", "edit", "published"].includes(it.stage);
+    if (shot && it.shotDay) done.set(it.shotDay, (done.get(it.shotDay) || 0) + 1);
+    else if (shot) undatedShot++;
+    else if (it.shootDay) planned.set(it.shootDay, (planned.get(it.shootDay) || 0) + 1);
+  }
+  const sorted = (m: Map<string, number>) => [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return { done: sorted(done), planned: sorted(planned), undatedShot };
 }
 export const CLIENT_STATUS: Record<string, string> = { idea: "🕒 В плане", script: "📝 Сценарий готов", shoot: "🎥 Снято", edit: "✂️ Смонтировано", published: "✅ Опубликовано", todo: "🕒 В работе", done: "✅ Готово" };
 const LANG_RU: Record<string, string> = { ru: "РУС", uz: "УЗБ", en: "ENG" };
@@ -171,14 +193,13 @@ export async function buildClientReport(projectId: number, note: string, planId?
 
   // --- съёмки и ближайшая публикация ---
   const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const shootDays = new Set([...videos, ...targets].map((v) => v.shootDay).filter(Boolean) as string[]);
   const upcoming = videos.filter((v) => v.stage !== "published" && v.publishDay && v.publishDay >= today).sort((a, b) => (a.publishDay as string).localeCompare(b.publishDay as string));
-  const past = [...shootDays].filter((d) => d <= today).sort();
-  const future = [...shootDays].filter((d) => d > today).sort();
   const ru = (iso: string) => iso.split("-").reverse().join(".");
-  if (shootDays.size) L.push(`📅 Съёмочных дней за период: ${shootDays.size}`);
-  if (past.length) L.push(`🎥 Последняя съёмка: ${ru(past[past.length - 1])}`);
-  if (future.length) L.push(`🗓 Ближайшая съёмка: ${ru(future[0])}`);
+  const sd = shootDaysOf(cp.items);
+  const days = (list: [string, number][]) => list.map(([d, n]) => `${ru(d)} (${n} видео)`).join(", ");
+  if (sd.done.length) L.push(`🎥 Съёмочные дни (факт): ${sd.done.length} — ${days(sd.done)}`);
+  if (sd.undatedShot) L.push(`🎥 Снято без указанной даты: ${sd.undatedShot}`);
+  if (sd.planned.length) L.push(`🗓 Запланированные съёмки: ${days(sd.planned)}`);
   if (upcoming.length) L.push(`⏭ Следующий выход: ${ru(upcoming[0].publishDay as string)}`);
 
   // --- статус каждого ролика: ради этого отчёт и открывают ---
