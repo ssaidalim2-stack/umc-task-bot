@@ -90,6 +90,28 @@ export function parseShootDay(s: string | null | undefined): string | null {
   return day.toISOString().slice(0, 10);
 }
 
+// дата выхода пункта для автопорядка: «18.10», «18.10.2026 18:00», «18.10 суббота»; без года — ближайший к сегодня
+function releaseKey(s: string | null | undefined): number | null {
+  const m = String(s || "").trim().match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?/);
+  if (!m) return null;
+  const now = Date.now() + 5 * 3600 * 1000;
+  let y = m[3] ? +m[3] : new Date(now).getUTCFullYear();
+  if (y < 100) y += 2000;
+  let t = Date.UTC(y, +m[2] - 1, +m[1]);
+  if (Number.isNaN(t) || new Date(t).getUTCDate() !== +m[1]) return null;
+  if (!m[3]) { const diff = (t - now) / 86400000; if (diff > 182) t = Date.UTC(y - 1, +m[2] - 1, +m[1]); else if (diff < -182) t = Date.UTC(y + 1, +m[2] - 1, +m[1]); }
+  return t;
+}
+
+// порядок в плане = порядок выхода: по дате публикации, без даты — следом (в прежнем порядке), сторис в конце.
+// Номера (#idx в боте, «Видео N» в таблице и отчёте) идут от этого порядка, поэтому всегда по очереди.
+export async function resortPlan(planId: number) {
+  const items = await d2.listItemsByPlan(planId);
+  const key = (x: any) => (x.type === "story" ? [2, 0] : (() => { const t = releaseKey(parseItemData(x.title).deadline); return t == null ? [1, 0] : [0, t]; })());
+  const sorted = items.map((x) => ({ x, k: key(x) })).sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.x.idx - b.x.idx || a.x.id - b.x.id);
+  for (let i = 0; i < sorted.length; i++) if (sorted[i].x.idx !== i + 1) await d2.updateItem(sorted[i].x.id, { idx: i + 1 });
+}
+
 // лояльный парсер дедлайна для полей вида "18.07 суббота" (как в карточке пункта) — в отличие от parseDeadline не требует точного совпадения всей строки
 export function parseFlexibleDeadline(s: string | null | undefined): string | null {
   if (!s) return null;
@@ -883,6 +905,7 @@ export async function doAction(userId: number, action: any) {
 
     // ---- редактируемая таблица контент-плана ----
     case "plan_items": {
+      if (role === "admin" || role === "manager") await resortPlan(+action.planId);
       const its = await d2.listItemsByPlan(+action.planId);
       return { items: its.map(serializeItem) };
     }
@@ -914,6 +937,7 @@ export async function doAction(userId: number, action: any) {
       await d2.updateItem(+action.id, patch);
       if (item0) await fin.onItemStage({ ...item0, type: patch.type || item0.type }, item0.stage, patch.stage);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
+      if (item0 && (data.deadline !== (prevData0.deadline || "") || patch.type)) await resortPlan(item0.plan_id);
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_patch": {
@@ -935,6 +959,7 @@ export async function doAction(userId: number, action: any) {
       await d2.updateItem(+action.id, patch);
       await fin.onItemStage({ ...it, type: patch.type || it.type }, it.stage, patch.stage);
       if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
+      if ("deadline" in p || p.type) await resortPlan(it.plan_id);
       return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
     }
     // ---- недельный план: обычные задачи с дедлайном внутри выбранной недели ----
@@ -1186,7 +1211,7 @@ export async function doAction(userId: number, action: any) {
       await d2.deleteContentItem(+action.id);
       // после удаления — сквозная перенумерация
       const rest = (await d2.listItemsByPlan(+action.planId));
-      for (let i = 0; i < rest.length; i++) if (rest[i].idx !== i + 1) await d2.updateItem(rest[i].id, { idx: i + 1 });
+      await resortPlan(+action.planId);
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_move": {
@@ -1198,6 +1223,7 @@ export async function doAction(userId: number, action: any) {
         const p = Math.max(1, Math.min(rest.length + 1, +action.toPos || moving.idx));
         rest.splice(p - 1, 0, moving);
         for (let i = 0; i < rest.length; i++) if (rest[i].idx !== i + 1) await d2.updateItem(rest[i].id, { idx: i + 1 });
+        await resortPlan(+action.planId); // вручную двигаются только пункты без даты (и с одной датой) — остальные встают по дате
       }
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
