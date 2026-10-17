@@ -122,15 +122,18 @@ export async function buildReport(title: string): Promise<{ text: string; chartU
 // пункты выбранного периода (по умолчанию — текущего) для отчёта клиенту: и для картинки, и для текста
 export interface ReportItem { target_only: boolean; idx: number; num: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null }
 export async function clientPlan(projectId: number, planId?: number | null): Promise<{ planId: number | null; period: string; plans: { id: number; period: string; is_active: boolean }[]; items: ReportItem[] }> {
-  const { parseItemData, parseShootDay } = await import("./webapp");
+  const { parseItemData, parseShootDay, resortPlan } = await import("./webapp");
   const plans = (await d2.getAllPlans()).filter((p) => p.project_id === projectId);
   const plan = (planId && plans.find((p) => p.id === planId)) || d2.currentPlanByProject(plans).get(projectId) || null;
+  if (plan) await resortPlan(plan.id); // номера — по очереди выхода, даже если таблицу с тех пор не открывали
   const raw = plan ? (await d2.listItemsByPlan(plan.id)).filter((x) => x.type !== "story") : [];
-  // номер внутри своего типа: «Видео 3», «Граф-пост 1» — как в Таблице
+  // номер внутри своего типа: «Видео 3», «Граф-пост 1», «Таргет 2» — как в Таблице.
+  // «Только таргет» в ленту не выходят — идут после ленты отдельным блоком
   const counters: Record<string, number> = {};
-  const items: ReportItem[] = raw.sort((a, b) => a.idx - b.idx).map((it) => {
+  const tgtOf = (it: any) => (it.type === "video" && parseItemData(it.title).target_only ? 1 : 0);
+  const items: ReportItem[] = raw.sort((a, b) => tgtOf(a) - tgtOf(b) || a.idx - b.idx).map((it) => {
     const d = parseItemData((it as any).title);
-    const k = it.type === "video" ? "video" : it.type === "photo" ? "photo" : "graphic";
+    const k = it.type === "video" ? (d.target_only ? "target" : "video") : it.type === "photo" ? "photo" : "graphic";
     counters[k] = (counters[k] || 0) + 1;
     return { target_only: !!d.target_only, idx: it.idx, num: counters[k], type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date) };
   });
@@ -145,7 +148,8 @@ export async function buildClientReport(projectId: number, note: string, planId?
   const proj = await d2.getProject(projectId);
   if (!proj) return "";
   const cp = await clientPlan(projectId, planId);
-  const videos = cp.items.filter((x) => x.type === "video");
+  const videos = cp.items.filter((x) => x.type === "video" && !x.target_only);
+  const targets = cp.items.filter((x) => x.target_only);
   const graphics = cp.items.filter((x) => x.type !== "video");
   const cnt = (st: string) => videos.filter((v) => v.stage === st).length;
 
@@ -163,10 +167,11 @@ export async function buildClientReport(projectId: number, note: string, planId?
   if (cnt("shoot")) L.push(`🎥 Отснято, в монтаже: ${cnt("shoot")}`);
   if (cnt("script")) L.push(`📝 Сценарии готовы, ждут съёмки: ${cnt("script")}`);
   if (graphics.length) L.push(`🖼 Графика: *${graphics.filter((g) => g.stage === "done").length}* из ${graphics.length}`);
+  if (targets.length) L.push(`🎯 Видео только для таргета: запущено *${targets.filter((t) => t.stage === "published").length}* из ${targets.length}`);
 
   // --- съёмки и ближайшая публикация ---
   const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const shootDays = new Set(videos.map((v) => v.shootDay).filter(Boolean) as string[]);
+  const shootDays = new Set([...videos, ...targets].map((v) => v.shootDay).filter(Boolean) as string[]);
   const upcoming = videos.filter((v) => v.stage !== "published" && v.publishDay && v.publishDay >= today).sort((a, b) => (a.publishDay as string).localeCompare(b.publishDay as string));
   const past = [...shootDays].filter((d) => d <= today).sort();
   const future = [...shootDays].filter((d) => d > today).sort();
@@ -177,18 +182,23 @@ export async function buildClientReport(projectId: number, note: string, planId?
   if (upcoming.length) L.push(`⏭ Следующий выход: ${ru(upcoming[0].publishDay as string)}`);
 
   // --- статус каждого ролика: ради этого отчёт и открывают ---
-  if (cp.items.length) {
+  const line = (it: ReportItem, head: string) => {
+    const bits = [`${head} — ${clean(it.theme) || "тема уточняется"}`];
+    if (LANG_RU[it.lang]) bits.push(LANG_RU[it.lang]);
+    bits.push(it.target_only && it.stage === "published" ? "🎯 Запущено в таргет" : CLIENT_STATUS[it.stage] || it.stage);
+    if (it.stage !== "published" && it.stage !== "done" && it.publishDay) bits.push(`${it.target_only ? "запуск" : "выход"} ${ru(it.publishDay)}`);
+    return bits.join(" — ");
+  };
+  const feed = cp.items.filter((x) => !x.target_only);
+  if (feed.length) {
     L.push("");
     L.push("*Статус по контенту*");
-    cp.items.forEach((it, i) => {
-      const kind = it.type === "video" ? "Видео" : it.type === "photo" ? "Фото" : "Граф-пост";
-      const bits = [`${i + 1}: ${kind} ${it.num} — ${clean(it.theme) || "тема уточняется"}`];
-      if (LANG_RU[it.lang]) bits.push(LANG_RU[it.lang]);
-      if (it.target_only) bits.push("🎯 только таргет");
-      bits.push(it.target_only && it.stage === "published" ? "🎯 Запущено в таргет" : CLIENT_STATUS[it.stage] || it.stage);
-      if (it.stage !== "published" && it.stage !== "done" && it.publishDay) bits.push(`выход ${ru(it.publishDay)}`);
-      L.push(bits.join(" — "));
-    });
+    feed.forEach((it, i) => L.push(line(it, `${i + 1}: ${it.type === "video" ? "Видео" : it.type === "photo" ? "Фото" : "Граф-пост"} ${it.num}`)));
+  }
+  if (targets.length) {
+    L.push("");
+    L.push("*🎯 Только таргет* (в ленту не выходят)");
+    targets.forEach((it) => L.push(line(it, `Таргет ${it.num}`)));
   }
 
   // --- реклама и Instagram ---

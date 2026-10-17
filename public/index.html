@@ -197,6 +197,7 @@
   .tb{display:inline-block;padding:2px 8px;border-radius:8px;font-size:12px;font-weight:800;white-space:nowrap}
   .tb-video{background:rgba(37,99,235,.16);color:#3b82f6}
   .tb-graphic{background:rgba(219,39,119,.16);color:#ec4899}
+  .tb-target{background:rgba(234,88,12,.18);color:#f97316}
   .tb-photo{background:rgba(217,119,6,.18);color:#f59e0b}
   .vid.trow{border-left:4px solid transparent;padding-left:10px;margin-left:0}
   .vid.trow-video{border-left-color:#3b82f6}
@@ -871,13 +872,18 @@ const DAILY_ROLE_OPTS=[["manager","Менеджеры"],["pm","Проджект-
 const TYPE_OPTS=[["video","🎬 Видео"],["graphic","🖼 Граф-пост"],["photo","📷 Фото"]];
 const TYPE_ICON={video:"🎬",graphic:"🖼",photo:"📷"};
 const TYPE_NAME={video:"Видео",graphic:"Граф-пост",photo:"Фото"};
-// номер внутри своего типа: «3: Граф-пост 1» — позиция в плане общая, а счёт видео и постов свой
+// номер внутри своего типа: «3: Граф-пост 1» — позиция в плане общая, а счёт видео и постов свой.
+// Порядок (idx) сервер держит по дате публикации, поэтому номера всегда идут по очереди выхода.
+// Видео «только таргет» в ленту не идут — у них свой счёт: «Таргет 1, 2…», ленточные «Видео N» без дыр
+const TK_ICON={...TYPE_ICON,target:"🎯"}, TK_NAME={...TYPE_NAME,target:"Таргет"};
+function typeKey(it){ const k=TYPE_NAME[it.type]?it.type:'video'; return k==='video'&&it.target_only?'target':k; }
+function typeName(it){ return TK_NAME[typeKey(it)]; }
 function typeNumbers(items){
   const cnt={}, out={};
-  (items||[]).filter(x=>x.type!=='story').slice().sort((a,b)=>a.idx-b.idx).forEach(x=>{ const k=TYPE_NAME[x.type]?x.type:'video'; cnt[k]=(cnt[k]||0)+1; out[x.id]=cnt[k]; });
+  (items||[]).filter(x=>x.type!=='story').slice().sort((a,b)=>a.idx-b.idx).forEach(x=>{ const k=typeKey(x); cnt[k]=(cnt[k]||0)+1; out[x.id]=cnt[k]; });
   return out;
 }
-function typeBadge(it,n){ const k=TYPE_NAME[it.type]?it.type:'video'; return `<span class="tb tb-${k}">${TYPE_ICON[k]} ${TYPE_NAME[k]}${n?' '+n:''}</span>`; }
+function typeBadge(it,n){ const k=typeKey(it); return `<span class="tb tb-${k}">${TK_ICON[k]} ${TK_NAME[k]}${n?' '+n:''}</span>`; }
 // it — сам пункт (необязательно): без съёмки нет этапа «Снято», у «только таргет» финал — «В таргете»
 function STATUS_OPTS(type,it){
   if(type!=='video') return [["todo","🕒 В работе"],["done","✅ Готово"]];
@@ -1219,11 +1225,12 @@ function rowHtml(it,pos,n){
   const dl=canEdit()
     ? `<input class="rowdl" data-dl="${it.id}" value="${esc(it.deadline||'')}" placeholder="${it.target_only?'запуск':'публикация'}" title="${it.target_only?'Дедлайн запуска в таргет':'Дедлайн публикации'}">`
     : (it.deadline?`<span class="chip">⏰ ${esc(it.deadline)}</span>`:'');
-  const mv=canEdit()?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
+  // пункты с датой встают по дате сами — двигать руками можно только те, что без даты
+  const mv=canEdit()&&!itemDay(it.deadline)?`<button class="btn sm sec" data-mv="${it.id}:${pos-1}" title="выше">▲</button><button class="btn sm sec" data-mv="${it.id}:${pos+1}" title="ниже">▼</button>`:'';
   const lg=it.lang?`<span class="chip">${LANG_SHORT[it.lang]||it.lang}</span>`:'';
   const sel=`<input type="checkbox" data-tsel="${it.id}" ${TBL_SELECTED.has(it.id)?'checked':''} title="Выбрать для группового копирования" style="margin-right:2px">`;
   const k=TYPE_NAME[it.type]?it.type:'video';
-  return `<div class="vid trow trow-${k}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)}${it.target_only?' <span class="tb" style="background:rgba(234,88,12,.18);color:#f97316">🎯 Таргет</span>':it.no_shoot&&it.type==='video'?' <span class="tb" style="background:rgba(127,127,127,.18);color:var(--hint)">без съёмки</span>':''} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage,it)}</span>${mv}</div></div>`;
+  return `<div class="vid trow trow-${k}">${sel}<div data-topen="${it.id}" class="trow-main"><b>${pos}:</b> ${typeBadge(it,n)}${!it.target_only&&it.no_shoot&&it.type==='video'?' <span class="tb" style="background:rgba(127,127,127,.18);color:var(--hint)">без съёмки</span>':''} ${body}</div><div class="trow-ctl">${dl}${lg}<span class="chip">${statusLabel(it.type,it.stage,it)}</span>${mv}</div></div>`;
 }
 
 function renderFrames(it){
@@ -1522,12 +1529,15 @@ function crWrap(ctx,text,maxW,maxLines){
 function crDate(iso){ return iso?iso.split('-').reverse().slice(0,2).join('.'):''; }
 function drawPlanImage(r){
   const items=r.items||[];
-  const videos=items.filter(x=>x.type==='video'), gfx=items.filter(x=>x.type!=='video');
+  // лента — основная сетка; «только таргет» в ленту не выходят, поэтому отдельным блоком внизу
+  const feed=items.filter(x=>!x.target_only), tgt=items.filter(x=>x.target_only);
+  const videos=feed.filter(x=>x.type==='video'), gfx=feed.filter(x=>x.type!=='video');
   const c=s=>videos.filter(v=>v.stage===s).length;
   const W=1600, pad=64, cols=4, gap=22, cardH=214;
   const cardW=Math.floor((W-2*pad-(cols-1)*gap)/cols);
-  const rows=Math.max(1,Math.ceil(items.length/cols));
-  const top=560, H=top+rows*(cardH+gap)+110;
+  const gridH=n=>Math.max(1,Math.ceil(n/cols))*(cardH+gap);
+  const top=560, tgtTop=top+gridH(feed.length)+40;
+  const H=(tgt.length?tgtTop+90+gridH(tgt.length):top+gridH(feed.length))+110;
   const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
   const ctx=cv.getContext('2d'); ctx.textBaseline='alphabetic';
   ctx.fillStyle='#f1f5f9'; ctx.fillRect(0,0,W,H);
@@ -1555,29 +1565,35 @@ function drawPlanImage(r){
   if(pct){ ctx.fillStyle='#16a34a'; crRound(ctx,pad,438,Math.max(18,(W-2*pad)*pct/100),18,9); ctx.fill(); }
   ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('Статус по контенту',pad,520);
   ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const pt=`опубликовано ${pct}% видео`; ctx.fillText(pt,W-pad-ctx.measureText(pt).width,520);
-  // карточки
-  items.forEach((it,i)=>{
-    const x=pad+(i%cols)*(cardW+gap), y=top+Math.floor(i/cols)*(cardH+gap);
+  const card=(it,i,y0,label)=>{
+    const x=pad+(i%cols)*(cardW+gap), y=y0+Math.floor(i/cols)*(cardH+gap);
     const [stLabel,stColor]=it.target_only&&it.stage==='published'?['Запущено в таргет','#ea580c']:(CR_ST[it.stage]||[it.stage,'#64748b']);
     const fin=it.stage==='published'||it.stage==='done';
-    ctx.fillStyle=fin?'#f0fdf4':'#ffffff'; crRound(ctx,x,y,cardW,cardH,18); ctx.fill();
-    ctx.strokeStyle=fin?'#bbf7d0':'#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle=fin?(it.target_only?'#fff7ed':'#f0fdf4'):'#ffffff'; crRound(ctx,x,y,cardW,cardH,18); ctx.fill();
+    ctx.strokeStyle=fin?(it.target_only?'#fed7aa':'#bbf7d0'):'#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
     ctx.save(); crRound(ctx,x,y,cardW,cardH,18); ctx.clip(); ctx.fillStyle=stColor; ctx.fillRect(x,y,10,cardH); ctx.restore();
-    const kind=it.type==='video'?'ВИДЕО':it.type==='photo'?'ФОТО':'ГРАФ-ПОСТ';
-    ctx.fillStyle='#94a3b8'; ctx.font=`800 20px ${CR_FONT}`; ctx.fillText(`${i+1}: ${kind} ${it.num||it.idx}`,x+28,y+40);
+    ctx.fillStyle=it.target_only?'#ea580c':'#94a3b8'; ctx.font=`800 20px ${CR_FONT}`; ctx.fillText(label,x+28,y+40);
     // дата выхода — в правом верхнем углу: внизу её вытесняли длинный статус и язык
-    if(!fin&&it.publishDay){ ctx.fillStyle='#475569'; ctx.font=`700 20px ${CR_FONT}`; const dt='выход '+crDate(it.publishDay); ctx.fillText(dt,x+cardW-20-ctx.measureText(dt).width,y+40); }
+    if(!fin&&it.publishDay){ ctx.fillStyle='#475569'; ctx.font=`700 20px ${CR_FONT}`; const dt=(it.target_only?'запуск ':'выход ')+crDate(it.publishDay); ctx.fillText(dt,x+cardW-20-ctx.measureText(dt).width,y+40); }
     ctx.fillStyle='#0f172a'; ctx.font=`600 25px ${CR_FONT}`;
     crWrap(ctx,it.theme||'Тема уточняется',cardW-52,3).forEach((ln,k)=>ctx.fillText(ln,x+28,y+78+k*32));
-    // статус + язык + дата выхода
+    // статус + язык
     ctx.font=`700 20px ${CR_FONT}`; const sw=ctx.measureText(stLabel).width+28;
     ctx.fillStyle=stColor; crRound(ctx,x+28,y+cardH-52,sw,34,17); ctx.fill();
     ctx.fillStyle='#ffffff'; ctx.fillText(stLabel,x+42,y+cardH-28);
-    let cx=x+28+sw+10;
-    if(it.target_only){ ctx.font=`700 20px ${CR_FONT}`; const tw2=ctx.measureText('ТАРГЕТ').width+24; ctx.fillStyle='#ffedd5'; crRound(ctx,cx,y+cardH-52,tw2,34,17); ctx.fill(); ctx.fillStyle='#c2410c'; ctx.fillText('ТАРГЕТ',cx+12,y+cardH-28); cx+=tw2+10; }
-    if(CR_LANG[it.lang]){ const lw=ctx.measureText(CR_LANG[it.lang]).width+24; ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-52,lw,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(CR_LANG[it.lang],cx+12,y+cardH-28); cx+=lw+10; }
-  });
-  if(!items.length){ ctx.fillStyle='#64748b'; ctx.font=`600 28px ${CR_FONT}`; ctx.fillText('В этом периоде пока нет пунктов',pad,top+60); }
+    const cx=x+28+sw+10;
+    if(CR_LANG[it.lang]){ const lw=ctx.measureText(CR_LANG[it.lang]).width+24; ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-52,lw,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(CR_LANG[it.lang],cx+12,y+cardH-28); }
+  };
+  const KIND={video:'ВИДЕО',photo:'ФОТО'};
+  feed.forEach((it,i)=>card(it,i,top,`${i+1}: ${KIND[it.type]||'ГРАФ-ПОСТ'} ${it.num||it.idx}`));
+  if(!feed.length){ ctx.fillStyle='#64748b'; ctx.font=`600 28px ${CR_FONT}`; ctx.fillText(tgt.length?'В ленту в этом периоде ничего не запланировано':'В этом периоде пока нет пунктов',pad,top+60); }
+  if(tgt.length){
+    ctx.fillStyle='#ea580c'; crRound(ctx,pad,tgtTop,W-2*pad,4,2); ctx.fill();
+    ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('🎯 Только таргет — в ленту не выходят',pad,tgtTop+56);
+    const run=tgt.filter(x=>x.stage==='published').length;
+    ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const tt=`запущено ${run} из ${tgt.length}`; ctx.fillText(tt,W-pad-ctx.measureText(tt).width,tgtTop+56);
+    tgt.forEach((it,i)=>card(it,i,tgtTop+90,`ТАРГЕТ ${it.num||i+1}`));
+  }
   ctx.fillStyle='#94a3b8'; ctx.font=`700 22px ${CR_FONT}`; const ft='UMC marketing team'; ctx.fillText(ft,W-pad-ctx.measureText(ft).width,H-44);
   return cv.toDataURL('image/png');
 }
@@ -3070,12 +3086,11 @@ function bind(){
     if(!items.length) return;
     const nums=typeNumbers(TBL_ITEMS);
     const blocks=items.map(it=>{
-      const kind=it.type==='video'?'🎬 Видео':it.type==='photo'?'📷 Фото':'🖼 Граф-пост';
-      const head=`${kind} ${nums[it.id]||it.idx}${it.theme?' — '+it.theme:''}`;
+      const head=`${TK_ICON[typeKey(it)]} ${typeName(it)} ${nums[it.id]||it.idx}${it.theme?' — '+it.theme:''}`;
       const body=buildFullScriptText(it,false);
       return body?head+'\n'+body:head+'\n(пусто)';
     });
-    const lbl=it=>(it.type==='video'?'Видео':it.type==='photo'?'Фото':'Граф-пост')+' '+(nums[it.id]||it.idx);
+    const lbl=it=>typeName(it)+' '+(nums[it.id]||it.idx);
     const refs=items.filter(it=>it.reference&&it.reference.trim()).map(it=>`${lbl(it)}: ${it.reference.trim()}`);
     const props=items.filter(it=>it.props&&it.props.trim()).map(it=>`${lbl(it)}: ${it.props.trim()}`);
     // разделитель без «#» и «===» — в Telegram и WhatsApp они превращались в мусор
