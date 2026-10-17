@@ -187,6 +187,22 @@ async function ensurePiece(item: { id: number; project_id: number; idx: number; 
     status: "done", note: `${PIECE_LABEL[kind]}: ${proj?.name || ""} ${what}`.trim(), ref,
   }]);
 }
+
+// фактический день съёмки — для отчёта клиенту: плановая дата, если она уже наступила, иначе день, когда отметили «Снято»
+async function stampShot(id: number, clear = false) {
+  const fresh = await d2.getItem(id);
+  if (!fresh) return;
+  let d: any = {};
+  try { d = JSON.parse((fresh as any).title || "{}") || {}; } catch { return; }
+  if (clear) { if (d.shot_at) { delete d.shot_at; await d2.updateItem(id, { title: JSON.stringify(d) }); } return; }
+  if (d.no_shoot || d.shot_at) return;
+  const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+  const { parseShootDay } = await import("./webapp");
+  const plan = parseShootDay(d.shoot_date);
+  d.shot_at = plan && plan <= today ? plan : today;
+  await d2.updateItem(id, { title: JSON.stringify(d) });
+}
+
 // Вызывается при КАЖДОЙ смене этапа пункта контент-плана. Начисляет только при переходе
 // вперёд через порог («Снято» → видеографу, «Смонтировано» → монтажёру, графика «Готово» →
 // дизайнеру). Ошибки глотаем: финансы не должны ломать работу с контент-планом.
@@ -196,7 +212,8 @@ export async function onItemStage(item: { id: number; project_id: number; idx: n
     if (item.type === "video") {
       const p = VIDEO_ORDER.indexOf(prevStage || "idea"), n = VIDEO_ORDER.indexOf(newStage);
       if (n < 0) return;
-      if (p < 2 && n >= 2) await ensurePiece(item, "shoot");
+      if (p < 2 && n >= 2) { await stampShot(item.id); await ensurePiece(item, "shoot"); }
+      if (p >= 2 && n < 2) await stampShot(item.id, true); // откатили «Снято» по ошибке — факт съёмки снимаем
       if (p < 3 && n >= 3) await ensurePiece(item, "edit");
     } else if (item.type === "graphic" || item.type === "photo") {
       if (prevStage !== "done" && newStage === "done") await ensurePiece(item, "graphic");

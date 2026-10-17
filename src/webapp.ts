@@ -165,7 +165,7 @@ function framesToText(frames: any[]): string {
 }
 function serializeItem(v: any) {
   const d = parseItemData(v.title);
-  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "", target_only: !!d.target_only, no_shoot: !!(d.no_shoot || d.target_only) };
+  return { id: v.id, idx: v.idx, type: v.type, stage: v.stage, format: v.format || "", lang: d.lang || "", theme: d.theme || "", script: d.script || "", frames: Array.isArray(d.frames) ? d.frames : [], reference: d.reference || "", props: d.props || "", shoot_date: d.shoot_date || "", shoot_time: d.shoot_time || "", shoot_manager: d.shoot_manager || "", location: d.location || "", deadline: d.deadline || "", ai_tz: d.ai_tz || "", locked: !!d.locked, last_edited_by: d.last_edited_by || "", shot_at: d.shot_at || "", target_only: !!d.target_only, no_shoot: !!(d.no_shoot || d.target_only) };
 }
 // «только таргет» — видео не идёт в ленту и делается без съёмки; «без съёмки» — без съёмочного дня.
 // У таких пунктов дата/время/ответственный за съёмку не хранятся, чтобы не попадать в календарь и напоминания.
@@ -925,7 +925,7 @@ export async function doAction(userId: number, action: any) {
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
       const scriptTxt = scriptFromFrames || f.script || "";
-      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId),
+      const data = { lang: f.lang || "", theme: f.theme || "", script: scriptTxt, frames, reference: f.reference || "", props: f.props || "", location: f.location || "", shoot_date: f.shoot_date || "", shoot_time: f.shoot_time || "", shoot_manager: f.shoot_manager || "", deadline: f.deadline || "", ai_tz: prevData0.ai_tz || "", shot_at: prevData0.shot_at || "", locked: !!prevData0.locked, last_edited_by: member?.name || String(userId),
         // старые клиенты флаги не присылают — тогда сохраняем то, что уже было
         target_only: "target_only" in f ? !!f.target_only : !!prevData0.target_only, no_shoot: "no_shoot" in f ? !!f.no_shoot : !!prevData0.no_shoot };
       applyVideoFlags(data);
