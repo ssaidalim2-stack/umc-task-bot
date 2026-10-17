@@ -1085,30 +1085,44 @@ export async function doAction(userId: number, action: any) {
     case "client_report_preview": {
       if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
       const pid = +action.projectId;
-      const { buildClientReport } = await import("./views");
-      const text = await buildClientReport(pid, String(action.note || ""));
-      const groups = await d2.clientBindings(pid);
-      return { reportText: text, clientGroups: groups.length };
+      const planId = action.planId ? +action.planId : null;
+      const { buildClientReport, clientPlan } = await import("./views");
+      const [text, cp, groups, proj] = await Promise.all([buildClientReport(pid, String(action.note || ""), planId), clientPlan(pid, planId), d2.clientBindings(pid), d2.getProject(pid)]);
+      return { reportText: text, clientGroups: groups.length, report: { project: proj?.name || "", ...cp } };
     }
     case "client_report_send": {
       if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
       const pid = +action.projectId;
-      const groups = await d2.clientBindings(pid);
-      if (!groups.length) return { error: "К этому проекту не привязана группа клиента. Добавь бота в группу и напиши там: /bind <ключ проекта> client" };
+      const target = action.target === "me" ? "me" : "client";
+      const groups = target === "client" ? await d2.clientBindings(pid) : [];
+      if (target === "client" && !groups.length) return { error: "К этому проекту не привязана группа клиента. Добавь бота в группу и напиши там: /bind <ключ проекта> client" };
       // отправляем ИМЕННО то, что менеджер видел и правил в поле; пересборка на сервере
       // молча выбросила бы его правки
       let text = String(action.text || "").trim();
       if (!text) {
         const { buildClientReport } = await import("./views");
-        text = await buildClientReport(pid, String(action.note || ""));
+        text = await buildClientReport(pid, String(action.note || ""), action.planId ? +action.planId : null);
       }
       if (!text) return { error: "не удалось собрать отчёт" };
+      const img = parseDataUrlImage(action.image);
+      const chats = target === "me" ? [userId] : groups.map((g) => g.chat_id);
+      const sendText = async (chat: number) => {
+        try { await bot.api.sendMessage(chat, text, { parse_mode: "Markdown" }); }
+        catch { await bot.api.sendMessage(chat, text); }
+      };
       let ok = 0;
-      for (const g of groups) {
-        try { await bot.api.sendMessage(g.chat_id, text, { parse_mode: "Markdown" }); ok++; }
-        catch { try { await bot.api.sendMessage(g.chat_id, text); ok++; } catch {} }
+      for (const chat of chats) {
+        try {
+          if (img) {
+            // клиенту — фото (откроется сразу в чате), себе — файлом без сжатия, чтобы переслать в любое место
+            if (target === "me") await bot.api.sendDocument(chat, new InputFile(new Uint8Array(img), "kontent-plan.png"));
+            else await bot.api.sendPhoto(chat, new InputFile(new Uint8Array(img), "kontent-plan.png"));
+          }
+          await sendText(chat);
+          ok++;
+        } catch { /* следующая группа */ }
       }
-      if (!ok) return { error: "не удалось отправить — проверь, что бот всё ещё в группе клиента" };
+      if (!ok) return { error: target === "me" ? "не удалось отправить — напиши боту /start в личку" : "не удалось отправить — проверь, что бот всё ещё в группе клиента" };
       return { sent: ok };
     }
     case "calendar_shoots": {

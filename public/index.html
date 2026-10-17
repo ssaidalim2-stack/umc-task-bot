@@ -978,7 +978,7 @@ async function silentRefresh(){
   if(document.hidden || ACT_BUSY) return;
   const el=document.activeElement;
   if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')) return;
-  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null || FIN_FORM || PROJ_BRIEF_OPEN!=null) return;
+  if(TBL_OPEN!=null || SALES_OPEN!=null || UMC_OPEN!=null || ST_OPEN!=null || SUB_OPEN!=null || CAL_ADD || CAL_EDIT_PROJ!=null || FIN_FORM || PROJ_BRIEF_OPEN!=null || CR_TEXT!=null) return;
   try{
     const res=await api('GET');
     DATA=res;
@@ -1409,24 +1409,115 @@ function renderReport(){
 }
 
 // ---- отчёт клиенту: бот сам собирает цифры, менеджер проверяет и отправляет ----
-let CR_PROJ=null, CR_TEXT=null, CR_GROUPS=0, CR_LOADING=false, CR_NOTE='';
+let CR_PROJ=null, CR_PLAN=null, CR_TEXT=null, CR_GROUPS=0, CR_LOADING=false, CR_NOTE='', CR_REPORT=null, CR_IMG=null;
+// ---- картинка контент-плана для клиента: рисуется прямо в приложении (canvas → PNG),
+// без внешних сервисов, чтобы выглядела одинаково на любом устройстве ----
+const CR_ST={
+  idea:['В плане','#64748b'], script:['Сценарий готов','#d97706'], shoot:['Снято','#7c3aed'],
+  edit:['Смонтировано','#2563eb'], published:['Опубликовано','#16a34a'], todo:['В работе','#d97706'], done:['Готово','#16a34a'],
+};
+const CR_LANG={ru:'РУС',uz:'УЗБ',en:'ENG'};
+const CR_FONT='-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+function crRound(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function crWrap(ctx,text,maxW,maxLines){
+  const words=String(text||'').split(/\s+/).filter(Boolean); const lines=[]; let cur='';
+  for(const w of words){
+    const t=cur?cur+' '+w:w;
+    if(ctx.measureText(t).width<=maxW){ cur=t; continue; }
+    if(cur) lines.push(cur); cur=w;
+    while(ctx.measureText(cur).width>maxW && cur.length>1){ let k=cur.length-1; while(k>1&&ctx.measureText(cur.slice(0,k)).width>maxW) k--; lines.push(cur.slice(0,k)); cur=cur.slice(k); }
+  }
+  if(cur) lines.push(cur);
+  if(lines.length>maxLines){ const keep=lines.slice(0,maxLines); let last=keep[maxLines-1]; while(last.length>1&&ctx.measureText(last+'…').width>maxW) last=last.slice(0,-1); keep[maxLines-1]=last+'…'; return keep; }
+  return lines;
+}
+function crDate(iso){ return iso?iso.split('-').reverse().slice(0,2).join('.'):''; }
+function drawPlanImage(r){
+  const items=r.items||[];
+  const videos=items.filter(x=>x.type==='video'), gfx=items.filter(x=>x.type!=='video');
+  const c=s=>videos.filter(v=>v.stage===s).length;
+  const W=1600, pad=64, cols=4, gap=22, cardH=214;
+  const cardW=Math.floor((W-2*pad-(cols-1)*gap)/cols);
+  const rows=Math.max(1,Math.ceil(items.length/cols));
+  const top=560, H=top+rows*(cardH+gap)+110;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d'); ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#f1f5f9'; ctx.fillRect(0,0,W,H);
+  // шапка
+  const grd=ctx.createLinearGradient(0,0,W,0); grd.addColorStop(0,'#1d4ed8'); grd.addColorStop(1,'#2563eb');
+  ctx.fillStyle=grd; ctx.fillRect(0,0,W,236);
+  ctx.fillStyle='rgba(255,255,255,.75)'; ctx.font=`700 26px ${CR_FONT}`; ctx.fillText('КОНТЕНТ-ПЛАН',pad,74);
+  ctx.fillStyle='#ffffff'; ctx.font=`800 64px ${CR_FONT}`; ctx.fillText(crWrap(ctx,r.project||'',W-2*pad,1)[0]||'',pad,148);
+  const today=new Date(Date.now()+5*3600*1000).toISOString().slice(0,10).split('-').reverse().join('.');
+  ctx.fillStyle='rgba(255,255,255,.85)'; ctx.font=`500 28px ${CR_FONT}`;
+  ctx.fillText(crWrap(ctx,(r.period?r.period+'  ·  ':'')+'статус на '+today,W-2*pad,1)[0]||'',pad,200);
+  // итоги
+  const tiles=[[`${c('published')}/${videos.length}`,'видео опубликовано','#16a34a'],[String(c('edit')),'смонтировано','#2563eb'],[String(c('shoot')),'снято, в монтаже','#7c3aed'],[String(c('script')),'сценарии готовы','#d97706'],
+    gfx.length?[`${gfx.filter(g=>g.stage==='done').length}/${gfx.length}`,'графика готова','#db2777']:[String(c('idea')),'в плане','#64748b']];
+  const tw=Math.floor((W-2*pad-4*gap)/5);
+  tiles.forEach(([v,l,col],i)=>{
+    const x=pad+i*(tw+gap), y=272;
+    ctx.fillStyle='#ffffff'; crRound(ctx,x,y,tw,132,18); ctx.fill(); ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle=col; ctx.font=`800 52px ${CR_FONT}`; ctx.fillText(v,x+24,y+70);
+    ctx.fillStyle='#475569'; ctx.font=`600 22px ${CR_FONT}`; ctx.fillText(l,x+24,y+108);
+  });
+  // прогресс
+  const pct=videos.length?Math.round(c('published')/videos.length*100):0;
+  ctx.fillStyle='#e2e8f0'; crRound(ctx,pad,438,W-2*pad,18,9); ctx.fill();
+  if(pct){ ctx.fillStyle='#16a34a'; crRound(ctx,pad,438,Math.max(18,(W-2*pad)*pct/100),18,9); ctx.fill(); }
+  ctx.fillStyle='#0f172a'; ctx.font=`700 30px ${CR_FONT}`; ctx.fillText('Статус по контенту',pad,520);
+  ctx.fillStyle='#64748b'; ctx.font=`600 24px ${CR_FONT}`; const pt=`опубликовано ${pct}% видео`; ctx.fillText(pt,W-pad-ctx.measureText(pt).width,520);
+  // карточки
+  items.forEach((it,i)=>{
+    const x=pad+(i%cols)*(cardW+gap), y=top+Math.floor(i/cols)*(cardH+gap);
+    const [stLabel,stColor]=CR_ST[it.stage]||[it.stage,'#64748b'];
+    const fin=it.stage==='published'||it.stage==='done';
+    ctx.fillStyle=fin?'#f0fdf4':'#ffffff'; crRound(ctx,x,y,cardW,cardH,18); ctx.fill();
+    ctx.strokeStyle=fin?'#bbf7d0':'#e2e8f0'; ctx.lineWidth=2; ctx.stroke();
+    ctx.save(); crRound(ctx,x,y,cardW,cardH,18); ctx.clip(); ctx.fillStyle=stColor; ctx.fillRect(x,y,10,cardH); ctx.restore();
+    const kind=it.type==='video'?'ВИДЕО':it.type==='photo'?'ФОТО':'ГРАФИКА';
+    ctx.fillStyle='#94a3b8'; ctx.font=`800 20px ${CR_FONT}`; ctx.fillText(`${kind} ${it.idx}`,x+28,y+40);
+    // дата выхода — в правом верхнем углу: внизу её вытесняли длинный статус и язык
+    if(!fin&&it.publishDay){ ctx.fillStyle='#475569'; ctx.font=`700 20px ${CR_FONT}`; const dt='выход '+crDate(it.publishDay); ctx.fillText(dt,x+cardW-20-ctx.measureText(dt).width,y+40); }
+    ctx.fillStyle='#0f172a'; ctx.font=`600 25px ${CR_FONT}`;
+    crWrap(ctx,it.theme||'Тема уточняется',cardW-52,3).forEach((ln,k)=>ctx.fillText(ln,x+28,y+78+k*32));
+    // статус + язык + дата выхода
+    ctx.font=`700 20px ${CR_FONT}`; const sw=ctx.measureText(stLabel).width+28;
+    ctx.fillStyle=stColor; crRound(ctx,x+28,y+cardH-52,sw,34,17); ctx.fill();
+    ctx.fillStyle='#ffffff'; ctx.fillText(stLabel,x+42,y+cardH-28);
+    let cx=x+28+sw+10;
+    if(CR_LANG[it.lang]){ const lw=ctx.measureText(CR_LANG[it.lang]).width+24; ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=2; crRound(ctx,cx,y+cardH-52,lw,34,17); ctx.stroke(); ctx.fillStyle='#334155'; ctx.fillText(CR_LANG[it.lang],cx+12,y+cardH-28); cx+=lw+10; }
+  });
+  if(!items.length){ ctx.fillStyle='#64748b'; ctx.font=`600 28px ${CR_FONT}`; ctx.fillText('В этом периоде пока нет пунктов',pad,top+60); }
+  ctx.fillStyle='#94a3b8'; ctx.font=`700 22px ${CR_FONT}`; const ft='UMC marketing team'; ctx.fillText(ft,W-pad-ctx.measureText(ft).width,H-44);
+  return cv.toDataURL('image/png');
+}
 function renderClientReport(){
   if(!canEdit()) return '';
   const projs=DATA.projects||[];
   if(!projs.length) return '';
   if(CR_PROJ==null||!projs.some(p=>p.id===CR_PROJ)) CR_PROJ=projs[0].id;
-  const pills=projs.map(p=>`<div class="pill ${p.id===CR_PROJ?'active':''}" data-crproj="${p.id}">${esc(p.name)}</div>`).join('');
-  const preview=CR_LOADING
-    ? umcLoader('Собираю данные…')
-    : (CR_TEXT!=null
-        ? `<textarea id="cr_text" style="min-height:220px;font-size:13px">${esc(CR_TEXT)}</textarea>
-           <div class="muted" style="font-size:11px;margin-top:4px">${CR_GROUPS?('Уйдёт в группу клиента'+(CR_GROUPS>1?' (групп: '+CR_GROUPS+')':'')+'. Жирный текст и звёздочки Telegram отрисует сам.'):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>'}</div>
-           <button class="btn full" data-crsend style="margin-top:8px" ${CR_GROUPS?'':'disabled'}>📤 Отправить клиенту</button>`
-        : '');
+  const p=projs.find(x=>x.id===CR_PROJ);
+  const plans=(p&&p.plans)||[];
+  const pills=projs.map(x=>`<div class="pill ${x.id===CR_PROJ?'active':''}" data-crproj="${x.id}">${esc(x.name)}</div>`).join('');
+  const planPills=plans.length>1?`<div class="pills">${plans.slice().reverse().map(pl=>`<div class="pill ${(CR_PLAN?CR_PLAN===pl.id:pl.is_active)?'active':''}" data-crplan="${pl.id}">${esc(pl.period)}${pl.is_active?' •':''}</div>`).join('')}</div>`:'';
+  let preview='';
+  if(CR_LOADING) preview=umcLoader('Собираю отчёт…');
+  else if(CR_TEXT!=null){
+    preview=`${CR_IMG?`<img src="${CR_IMG}" alt="Контент-план" style="width:100%;border-radius:12px;margin-top:10px;border:1px solid var(--line)">`:''}
+      <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:flex-start">
+        <button class="btn sm" data-crsend ${CR_GROUPS?'':'disabled'}>📤 Отправить клиенту</button>
+        <button class="btn sm sec" data-crme>📥 Прислать мне</button>
+        <button class="btn sm sec" data-crcopy>📋 Скопировать текст</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px">${CR_GROUPS?('«Отправить клиенту» — картинка и текст уйдут в группу клиента'+(CR_GROUPS>1?' (групп: '+CR_GROUPS+')':'')+'. '):'⚠️ Группа клиента не привязана — добавь бота в группу клиента и напиши там <code>/bind &lt;ключ проекта&gt; client</code>. '}«Прислать мне» — картинка файлом без сжатия и текст в личку, чтобы переслать куда угодно.</div>
+      <div class="muted" style="margin-top:10px">Текст (можно поправить перед отправкой):</div>
+      <textarea id="cr_text" style="min-height:220px;font-size:13px">${esc(CR_TEXT)}</textarea>`;
+  }
   return `<div class="card">
     <h3>📤 Отчёт клиенту</h3>
-    <div class="muted" style="font-size:12px">Бот соберёт цифры сам: публикации, съёмки, статус таргета и активность последних роликов. Текст можно поправить перед отправкой.</div>
-    <div class="pills">${pills}</div>
+    <div class="muted" style="font-size:12px">Картинка контент-плана со статусом каждого ролика, языком и датами выхода + текст с итогами, таргетом и последними публикациями.</div>
+    <div class="pills">${pills}</div>${planPills}
     <div class="muted">Комментарий от себя (необязательно):</div>
     <textarea id="cr_note" style="min-height:52px" placeholder="Что хотите добавить клиенту">${esc(CR_NOTE)}</textarea>
     <button class="btn sm full" data-crbuild style="margin-top:8px">🧾 Сформировать отчёт</button>
@@ -2686,26 +2777,33 @@ function bind(){
     });
     if(tg.showConfirm) tg.showConfirm('Удалить запись?',(ok)=>{if(ok)run();}); else run();
   };
-  document.querySelectorAll('[data-crproj]').forEach(b=>b.onclick=()=>{CR_PROJ=+b.dataset.crproj;CR_TEXT=null;render();});
+  document.querySelectorAll('[data-crproj]').forEach(b=>b.onclick=()=>{CR_PROJ=+b.dataset.crproj;CR_PLAN=null;CR_TEXT=null;CR_IMG=null;render();});
+  document.querySelectorAll('[data-crplan]').forEach(b=>b.onclick=()=>{CR_PLAN=+b.dataset.crplan;CR_TEXT=null;CR_IMG=null;render();});
   const crb=document.querySelector('[data-crbuild]'); if(crb) crb.onclick=()=>busyClick(crb, async()=>{
-    CR_NOTE=val('cr_note')||''; CR_LOADING=true; CR_TEXT=null; render();
-    const res=await api('POST',{type:'client_report_preview',projectId:CR_PROJ,note:CR_NOTE});
+    CR_NOTE=val('cr_note')||''; CR_LOADING=true; CR_TEXT=null; CR_IMG=null; render();
+    let res=null; try{ res=await api('POST',{type:'client_report_preview',projectId:CR_PROJ,planId:CR_PLAN,note:CR_NOTE}); }catch(e){}
     CR_LOADING=false;
-    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);render();return;}
-    CR_TEXT=(res&&res.reportText)||''; CR_GROUPS=(res&&res.clientGroups)||0;
+    if(!res||res.error){tg.showAlert&&tg.showAlert((res&&res.error)||'нет связи');render();return;}
+    CR_TEXT=res.reportText||''; CR_GROUPS=res.clientGroups||0; CR_REPORT=res.report||null;
+    try{ if(document.fonts&&document.fonts.ready) await document.fonts.ready; CR_IMG=CR_REPORT?drawPlanImage(CR_REPORT):null; }catch(e){ CR_IMG=null; }
     render();
   });
-  const crs=document.querySelector('[data-crsend]'); if(crs) crs.onclick=()=>busyClick(crs, async()=>{
+  const crSend=async(target,btn)=>{
     const edited=val('cr_text')||'';
-    const run=async()=>{
-      // отправляем ровно то, что менеджер видит в поле: правки не должны теряться
-      const res=await api('POST',{type:'client_report_send',projectId:CR_PROJ,note:'',text:edited});
-      if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
-      CR_TEXT=null; render();
-      tg.showAlert&&tg.showAlert('Отчёт отправлен клиенту ✅');
-    };
-    if(tg.showConfirm) tg.showConfirm('Отправить отчёт в группу клиента?',(ok)=>{if(ok)run();}); else run();
+    const res=await api('POST',{type:'client_report_send',projectId:CR_PROJ,planId:CR_PLAN,target,image:CR_IMG,text:edited});
+    if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+    tg.showAlert&&tg.showAlert(target==='me'?'Отправил тебе в личку ✅':'Отчёт отправлен клиенту ✅');
+  };
+  const crs=document.querySelector('[data-crsend]'); if(crs) crs.onclick=()=>busyClick(crs, async()=>{
+    if(tg.showConfirm) await new Promise(ok=>tg.showConfirm('Отправить отчёт в группу клиента?',async(y)=>{ if(y) await crSend('client'); ok(); }));
+    else await crSend('client');
   });
+  const crm=document.querySelector('[data-crme]'); if(crm) crm.onclick=()=>busyClick(crm, ()=>crSend('me'));
+  const crc=document.querySelector('[data-crcopy]'); if(crc) crc.onclick=async()=>{
+    // в буфер — без разметки Telegram, чтобы в любом мессенджере текст был чистым
+    const ok=await copyText((val('cr_text')||'').replace(/\*/g,'')); haptic();
+    tg.showAlert&&tg.showAlert(ok?'Текст скопирован ✅':'Не удалось скопировать');
+  };
   document.querySelectorAll('[data-subopen]').forEach(b=>b.onclick=()=>{SUB_OPEN=+b.dataset.subopen;SUB_EDIT=null;render();});
   const sbn=document.querySelector('[data-subnew]'); if(sbn) sbn.onclick=()=>{SUB_OPEN='new';SUB_EDIT=null;render();};
   document.querySelectorAll('[data-subcur]').forEach(b=>b.onclick=()=>{captureSub();SUB_EDIT.currency=b.dataset.subcur;render();});
@@ -2882,15 +2980,18 @@ function bind(){
     const items=(TBL_ITEMS||[]).filter(x=>TBL_SELECTED.has(x.id));
     if(!items.length) return;
     const blocks=items.map(it=>{
-      const head=`=== ${it.type==='video'?'Видео':'Пункт'} #${it.idx}${it.theme?': '+it.theme:''} ===`;
+      const kind=it.type==='video'?'🎬 Видео':it.type==='photo'?'📷 Фото':'🖼 Граф-пост';
+      const head=`${kind} ${it.idx}${it.theme?' — '+it.theme:''}`;
       const body=buildFullScriptText(it,false);
       return body?head+'\n'+body:head+'\n(пусто)';
     });
-    const refs=items.filter(it=>it.reference&&it.reference.trim()).map(it=>`#${it.idx}: ${it.reference.trim()}`);
-    const props=items.filter(it=>it.props&&it.props.trim()).map(it=>`#${it.idx}: ${it.props.trim()}`);
-    let text=blocks.join('\n\n');
-    if(refs.length) text+='\n\n——— Референсы ———\n'+refs.join('\n');
-    if(props.length) text+='\n\n——— Реквизиты ———\n'+props.join('\n');
+    const lbl=it=>(it.type==='video'?'Видео':it.type==='photo'?'Фото':'Граф-пост')+' '+it.idx;
+    const refs=items.filter(it=>it.reference&&it.reference.trim()).map(it=>`${lbl(it)}: ${it.reference.trim()}`);
+    const props=items.filter(it=>it.props&&it.props.trim()).map(it=>`${lbl(it)}: ${it.props.trim()}`);
+    // разделитель без «#» и «===» — в Telegram и WhatsApp они превращались в мусор
+    let text=blocks.join('\n\n────────────\n\n');
+    if(refs.length) text+='\n\n📎 Референсы:\n'+refs.join('\n');
+    if(props.length) text+='\n\n🧰 Реквизиты:\n'+props.join('\n');
     const ok=await copyText(text); haptic();
     tg.showAlert&&tg.showAlert(ok?`Скопировано пунктов: ${items.length} ✅`:'Не удалось скопировать');
   };
