@@ -120,15 +120,19 @@ export async function buildReport(title: string): Promise<{ text: string; chartU
 // всё равно должен уйти, просто без этих строк: цифры клиенту важны, но
 // неработающая интеграция не повод не отчитаться о проделанной работе.
 // пункты выбранного периода (по умолчанию — текущего) для отчёта клиенту: и для картинки, и для текста
-export interface ReportItem { idx: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null }
+export interface ReportItem { idx: number; num: number; type: string; theme: string; lang: string; stage: string; deadline: string; publishDay: string | null; shootDay: string | null }
 export async function clientPlan(projectId: number, planId?: number | null): Promise<{ planId: number | null; period: string; plans: { id: number; period: string; is_active: boolean }[]; items: ReportItem[] }> {
   const { parseItemData, parseShootDay } = await import("./webapp");
   const plans = (await d2.getAllPlans()).filter((p) => p.project_id === projectId);
   const plan = (planId && plans.find((p) => p.id === planId)) || d2.currentPlanByProject(plans).get(projectId) || null;
   const raw = plan ? (await d2.listItemsByPlan(plan.id)).filter((x) => x.type !== "story") : [];
+  // номер внутри своего типа: «Видео 3», «Граф-пост 1» — как в Таблице
+  const counters: Record<string, number> = {};
   const items: ReportItem[] = raw.sort((a, b) => a.idx - b.idx).map((it) => {
     const d = parseItemData((it as any).title);
-    return { idx: it.idx, type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date) };
+    const k = it.type === "video" ? "video" : it.type === "photo" ? "photo" : "graphic";
+    counters[k] = (counters[k] || 0) + 1;
+    return { idx: it.idx, num: counters[k], type: it.type, theme: String(d.theme || "").trim(), lang: String(d.lang || ""), stage: it.stage, deadline: String(d.deadline || ""), publishDay: parseShootDay(d.deadline), shootDay: parseShootDay(d.shoot_date) };
   });
   return { planId: plan?.id ?? null, period: plan?.period || "", plans: plans.map((p) => ({ id: p.id, period: p.period, is_active: p.is_active })), items };
 }
@@ -176,14 +180,14 @@ export async function buildClientReport(projectId: number, note: string, planId?
   if (cp.items.length) {
     L.push("");
     L.push("*Статус по контенту*");
-    for (const it of cp.items) {
-      const kind = it.type === "video" ? "Видео" : it.type === "photo" ? "Фото" : "Графика";
-      const bits = [`${it.idx}. ${kind}: ${clean(it.theme) || "тема уточняется"}`];
+    cp.items.forEach((it, i) => {
+      const kind = it.type === "video" ? "Видео" : it.type === "photo" ? "Фото" : "Граф-пост";
+      const bits = [`${i + 1}: ${kind} ${it.num} — ${clean(it.theme) || "тема уточняется"}`];
       if (LANG_RU[it.lang]) bits.push(LANG_RU[it.lang]);
       bits.push(CLIENT_STATUS[it.stage] || it.stage);
       if (it.stage !== "published" && it.stage !== "done" && it.publishDay) bits.push(`выход ${ru(it.publishDay)}`);
       L.push(bits.join(" — "));
-    }
+    });
   }
 
   // --- реклама и Instagram ---
