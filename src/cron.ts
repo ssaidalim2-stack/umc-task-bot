@@ -6,6 +6,7 @@ import { buildReport, buildTeamMorning, buildTeamEvening } from "./views";
 import { metaConfigured, pullSnapshot, tokenCheck } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
 import * as fin from "./finance";
+import * as ideas from "./ideas";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
@@ -25,10 +26,17 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   const dom = local.getUTCDate();
   const day = local.toISOString().slice(0, 10);
 
-  // Meta (IG + Ads): дневной снэпшот за вчера, в 07:00 — до утреннего отчёта.
+  // Крон дёргается снаружи, и не по часам: GitHub Actions при «каждые 15 минут»
+  // на деле запускает его раз в 3–5 часов. Проверка «ровно в 10:00» поэтому почти
+  // всегда промахивалась, и сводки в группу не приходили. Теперь каждая рассылка
+  // ловит первый запуск в своём окне (с часа from, span часов), а маркер дня
+  // не даёт отправить её дважды.
+  const due = (from: number, span: number) => hour >= from && hour < from + span;
+
+  // Meta (IG + Ads): дневной снэпшот за вчера — с 07:00, до утреннего отчёта.
   // Сбор данных идёт ВСЕГДА, даже когда уведомления на паузе: он никому ничего не шлёт,
   // а прерывать историю цифр из-за выключенных уведомлений нельзя.
-  if (hour === 7 && (await metaConfigured()) && (await d2.claimMarker("meta_pull", day))) {
+  if (due(7, 10) && (await metaConfigured()) && (await d2.claimMarker("meta_pull", day))) {
     const yesterday = new Date(now + TZ_OFFSET - 24 * HOUR).toISOString().slice(0, 10);
     try { await pullSnapshot(yesterday); } catch { /* не роняем остальной крон */ }
   }
@@ -43,27 +51,27 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   if ((await d2.getSetting("notifications_paused")) === "1") return { checked: 0, sent: 0 };
 
   // токен Meta: умер или истекает в ближайшую неделю — сказать админам, а не молчать полтора месяца
-  if (hour === 9 && (await metaConfigured()) && (await d2.claimMarker("meta_token_check", day))) sent += await metaTokenReminder();
+  if (due(9, 9) && (await metaConfigured()) && (await d2.claimMarker("meta_token_check", day))) sent += await metaTokenReminder();
 
   // оплаты клиентов, срок которых наступил или прошёл — админам, раз в день
-  if (hour === 9 && (await d2.claimMarker("fin_due", day))) sent += await clientPaymentReminders(day);
+  if (due(9, 9) && (await d2.claimMarker("fin_due", day))) sent += await clientPaymentReminders(day);
 
   sent += await deadlineReminders(now);
   sent += await subscriptionReminders(day);
 
   // дайджест задач 2×/день: утром — что сегодня, вечером — что осталось
-  if (hour === 8 && (await d2.claimMarker("digest_8", day))) sent += await sendDigests("morning");
-  if (hour === 20 && (await d2.claimMarker("digest_20", day))) sent += await sendDigests("evening");
+  if (due(8, 4) && (await d2.claimMarker("digest_8", day))) sent += await sendDigests("morning");
+  if (due(20, 3) && (await d2.claimMarker("digest_20", day))) sent += await sendDigests("evening");
 
   // сторис на сегодня — утром, с прикреплённым материалом
-  if (hour === 9 && (await d2.claimMarker("stories_today", day))) sent += await storyReminders(day);
+  if (due(9, 4) && (await d2.claimMarker("stories_today", day))) sent += await storyReminders(day);
 
   // сводки в группу команды: утром задачи на день, вечером итоги
-  if (hour === 10 && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(await buildTeamMorning());
-  if (hour === 23 && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(await buildTeamEvening());
+  if (due(10, 4) && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(await buildTeamMorning());
+  if (due(22, 2) && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(await buildTeamEvening());
 
-  // отчёты в 08:00 утра
-  if (hour === 8) {
+  // отчёты админам и съёмки (у напоминаний о съёмках свои маркеры на каждый пункт)
+  if (due(8, 6)) {
     // ежедневный отчёт отключён: дублировал утреннюю сводку команды в 10:00
     if (dow === 1 && (await d2.claimMarker("report_weekly", day))) sent += await sendReport("Еженедельный отчёт");
     if (dom === 1 && (await d2.claimMarker("report_monthly", day))) sent += await sendReport("Ежемесячный отчёт");
@@ -72,10 +80,13 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
 
   // (связь с Google-таблицами отключена — контент-план ведётся в самом боте)
 
+  // утренние AI-идеи по проектам менеджеров (с задачами на день вместо 8-часового дайджеста)
+  try { sent += await ideas.runIdeasTick(bot.api, now, async (m) => (await d2.tasksForMember(m)).filter((x) => x.status === "new" || x.status === "in_progress").map((x) => x.title)); }
+  catch (e) { console.error("ideas tick", e); }
 
   // сброс повторяющихся задач
-  if (dow === 1 && hour === 6 && (await d2.claimMarker("reset_weekly", day))) await resetRecurring("weekly");
-  if (dom === 1 && hour === 6 && (await d2.claimMarker("reset_monthly", day))) await resetRecurring("monthly");
+  if (dow === 1 && hour >= 6 && (await d2.claimMarker("reset_weekly", day))) await resetRecurring("weekly");
+  if (dom === 1 && hour >= 6 && (await d2.claimMarker("reset_monthly", day))) await resetRecurring("monthly");
 
   return { checked: 0, sent };
 }
@@ -159,8 +170,11 @@ async function subscriptionReminders(today: string): Promise<number> {
 // ---------- дайджесты задач (утро / вечер) ----------
 async function sendDigests(part: "morning" | "evening"): Promise<number> {
   const members = await db.listMembers();
+  // у кого сегодня утренние идеи — им задачи придут в том же сообщении, без дубля
+  const skip = new Set<number>(part === "morning" && ideas.ideasDay() ? (await ideas.recipients()).map((r) => r.member.telegram_id) : []);
   let sent = 0;
   for (const m of members) {
+    if (skip.has(m.telegram_id)) continue;
     const tasks = await d2.tasksForMember(m);
     const open = tasks.filter((x) => x.status === "new" || x.status === "in_progress");
     if (!open.length) continue;   // нечего сказать — молчим, а не пишем «задач нет»
