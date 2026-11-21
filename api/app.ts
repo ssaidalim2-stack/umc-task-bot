@@ -14,11 +14,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const data = await doAction(userId, req.body || {});
       res.status(200).json(data);
     } else {
-      const data = await getData(userId);
+      const data = await getData(userId, v.user);
       res.status(200).json(data);
     }
   } catch (e: any) {
     console.error("app api error", e);
-    res.status(500).json({ error: String(e?.message || e) });
+    res.status(500).json({ error: "ошибка сервера" });
   }
 }

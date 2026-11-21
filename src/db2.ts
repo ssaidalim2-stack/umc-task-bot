@@ -187,7 +187,24 @@ export async function setTeamRoles(telegramId: number, roles: string[], isAdmin:
 }
 export async function removeMember(telegramId: number): Promise<void> {
   await dbDeleteMember(telegramId);
+  await setMemberPending(telegramId, false);
   _membersCache = null;
+}
+
+// ---------- заявка на доступ: новый человек ждёт одобрения админа ----------
+// Хранится ключом member_pending:<id> в app_settings (без ALTER TABLE). Кто уже был в команде
+// до появления заявок, ключа не имеет и считается одобренным.
+export async function isMemberPending(telegramId: number): Promise<boolean> {
+  return (await getSetting(`member_pending:${telegramId}`)) != null;
+}
+export async function setMemberPending(telegramId: number, pending: boolean): Promise<void> {
+  if (pending) await setSetting(`member_pending:${telegramId}`, "1");
+  else await supabase.from("app_settings").delete().eq("key", `member_pending:${telegramId}`);
+}
+export async function getPendingBulk(ids: number[]): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const { data } = await supabase.from("app_settings").select("key").in("key", ids.map((id) => `member_pending:${id}`));
+  return new Set(((data as any[]) ?? []).map((r) => +String(r.key).split(":")[1]));
 }
 
 // ---------- точечные права доступа к разделам (переопределяют набор по роли) ----------
