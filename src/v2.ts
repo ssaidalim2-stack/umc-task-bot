@@ -30,6 +30,13 @@ async function projectsKeyboard(prefix: string): Promise<InlineKeyboard> {
   return kb;
 }
 
+// роли нажавшего: админ — ["admin"], иначе все его роли
+async function rolesOf(id: number): Promise<string[]> {
+  const m = await db.getMember(id);
+  return isAdmin(m, id) ? ["admin"] : db.memberRoleList(m);
+}
+const PLANNER_ROLES = ["admin", "manager", "pm"];
+
 export function registerV2(bot: Bot) {
   // ----- главное меню -----
   bot.command("menu", async (ctx) => {
@@ -57,6 +64,7 @@ export function registerV2(bot: Bot) {
     if (v) await nav(ctx, v);
   });
   bot.callbackQuery(/^vid_fmt:(\d+):(fun|sell)$/, async (ctx) => {
+    if (!(await rolesOf(ctx.from.id)).some((r) => PLANNER_ROLES.includes(r))) return ctx.answerCallbackQuery({ text: "Нет доступа", show_alert: true });
     await d2.updateItem(+ctx.match![1], { format: ctx.match![2] });
     const v = await views.videoCard(+ctx.match![1]);
     if (v) await nav(ctx, v);
@@ -68,6 +76,11 @@ export function registerV2(bot: Bot) {
     let nx = nextStage(item.stage);
     if (nx === "shoot" && parseItemData((item as any).title).no_shoot) nx = nextStage("shoot"); // без съёмки — сразу в монтаж
     if (!nx) return ctx.answerCallbackQuery({ text: "Уже опубликовано" });
+    // двигает этап планировщик или владелец этапа; публикацию — только админ (остальные — через подтверждение в приложении)
+    const roles = await rolesOf(ctx.from.id);
+    const owners = [...PLANNER_ROLES, ...(STAGE_OWNER_ROLES[item.stage] || []), ...(STAGE_OWNER_ROLES[nx] || [])];
+    if (!roles.some((r) => owners.includes(r))) return ctx.answerCallbackQuery({ text: "Нет доступа к этому этапу", show_alert: true });
+    if (nx === "published" && !roles.includes("admin")) return ctx.answerCallbackQuery({ text: "Публикацию подтверждает админ — отметь её в приложении", show_alert: true });
     const status = nx === "published" ? "done" : "in_progress";
     await d2.updateItem(id, { stage: nx, status });
     await fin.onItemStage(item, item.stage, nx);
@@ -77,6 +90,7 @@ export function registerV2(bot: Bot) {
   });
   bot.callbackQuery(/^gfx_done:(\d+)$/, async (ctx) => {
     const projectId = +ctx.match![1];
+    if (!(await rolesOf(ctx.from.id)).some((r) => [...PLANNER_ROLES, "designer"].includes(r))) return ctx.answerCallbackQuery({ text: "Нет доступа", show_alert: true });
     const graphics = await d2.listItems(projectId, "graphic");
     const next = graphics.find((g) => g.stage !== "done");
     if (next) { await d2.updateItem(next.id, { stage: "done", status: "done" }); await fin.onItemStage(next, next.stage, "done"); }
@@ -103,6 +117,10 @@ export function registerV2(bot: Bot) {
     const id = +ctx.match![1];
     const t = await d2.getTaskRow(id);
     if (!t) return ctx.answerCallbackQuery();
+    // отметить выполненной можно только свою задачу (или если ты админ/менеджер)
+    const me = await db.getMember(ctx.from.id);
+    const mine = t.assignee_id ? t.assignee_id === ctx.from.id : !!t.assignee_name && (await d2.resolveMember(t.assignee_name))?.telegram_id === ctx.from.id;
+    if (!mine && !isAdmin(me, ctx.from.id) && !db.memberRoleList(me).includes("manager")) return ctx.answerCallbackQuery({ text: "Это не твоя задача", show_alert: true });
     await d2.setTaskStatus(id, "await_confirm");
     await ctx.answerCallbackQuery({ text: "Отправлено на подтверждение" });
     // уведомить подтверждающих (Саид + Бобур + env-админы)

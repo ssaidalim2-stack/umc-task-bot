@@ -13,11 +13,51 @@ import { renderCard, renderTaskLine } from "./render";
 import { quickDeadline, parseCustomDeadline } from "./time";
 import { registerV2 } from "./v2";
 import { mainMenu } from "./views";
+import * as d2 from "./db2";
+import { requestAccess, approveMember, rejectMember, PENDING_TEXT } from "./webapp";
 
 export const bot = new Bot(process.env.BOT_TOKEN as string);
 
+// Доступ: в бота пускаем только команду. Кто не нажал /start — просим нажать; чья заявка
+// ещё у админа — ничего не показываем. Стоит ПЕРВЫМ, до всех обработчиков.
+bot.use(async (ctx, next) => {
+  const uid = ctx.from?.id;
+  if (!uid || (!ctx.message && !ctx.callbackQuery) || ENV_ADMINS.includes(uid)) return next();
+  const text = ctx.message?.text || "";
+  const data = ctx.callbackQuery?.data || "";
+  if (/^\/start(@\w+)?(\s|$)/.test(text) || data.startsWith("lang:")) return next();
+  const m = await db.getMember(uid);
+  if (m?.is_admin) return next();
+  const isPrivate = ctx.chat?.type === "private";
+  const deny = async (msg: string) => {
+    if (ctx.callbackQuery) { try { await ctx.answerCallbackQuery({ text: msg, show_alert: true }); } catch {} }
+    else if (isPrivate) { try { await ctx.reply(msg); } catch {} }
+    // в группах молчим: там пишут и клиенты, отвечать им не нужно
+  };
+  if (!m) return deny("Нажми /start, чтобы отправить заявку на доступ.");
+  if (await d2.isMemberPending(uid)) return deny(PENDING_TEXT);
+  return next();
+});
+
 // регистрируем v2-обработчики ДО message:text-визарда (иначе команды не сработают)
 registerV2(bot);
+
+// заявка на доступ: кнопки «Пустить» / «Отклонить» у админа
+bot.callbackQuery(/^acc_(ok|no):(\d+)$/, async (ctx) => {
+  const m = await db.getMember(ctx.from.id);
+  if (!isAdmin(m, ctx.from.id)) return ctx.answerCallbackQuery({ text: "Только админ" });
+  const id = +ctx.match![2];
+  const target = await db.getMember(id);
+  const who = target?.name || String(id);
+  if (!(await d2.isMemberPending(id))) {
+    await ctx.answerCallbackQuery({ text: "Заявка уже обработана" });
+    try { await ctx.editMessageReplyMarkup(); } catch {}
+    return;
+  }
+  if (ctx.match![1] === "ok") await approveMember(id); else await rejectMember(id);
+  await ctx.answerCallbackQuery({ text: ctx.match![1] === "ok" ? "Пустил ✅" : "Отклонено" });
+  try { await ctx.editMessageText(ctx.match![1] === "ok" ? `✅ ${who} в команде. Роль назначь в приложении → Команда.` : `✖️ Заявка ${who} отклонена.`); } catch {}
+});
 
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "")
   .split(",")
@@ -52,6 +92,8 @@ bot.command("start", async (ctx) => {
     specialization: existing?.specialization ?? null,
     lang: existing?.lang || DEFAULT_LANG,
   });
+  // новый человек — заявка админу; пока её не одобрят, бот ему ничего не показывает
+  if (!existing && !ENV_ADMINS.includes(from.id)) await requestAccess(from.id, member.name || "", member.username || null);
   await ctx.reply(t(langOf(member), "start_welcome", { name: member.name || "" }), {
     reply_markup: langKeyboard(),
   });
@@ -159,6 +201,10 @@ bot.callbackQuery(/^lang:(ru|uz)$/, async (ctx) => {
   const m = await db.getMember(ctx.from.id);
   await ctx.answerCallbackQuery();
   await ctx.reply(t(lang, "lang_set"));
+  if (m && !isAdmin(m, ctx.from.id) && (await d2.isMemberPending(ctx.from.id))) {
+    await ctx.reply(PENDING_TEXT);
+    return;
+  }
   if (m) {
     await ctx.reply(
       t(lang, "start_registered", {

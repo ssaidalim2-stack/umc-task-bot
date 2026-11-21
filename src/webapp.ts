@@ -19,7 +19,10 @@ export function validateInitData(initData: string): { ok: boolean; user?: any } 
     const dcs = [...params.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => `${k}=${v}`).join("\n");
     const secret = crypto.createHmac("sha256", "WebAppData").update(token).digest();
     const calc = crypto.createHmac("sha256", secret).update(dcs).digest("hex");
-    if (calc !== hash) return { ok: false };
+    if (calc.length !== hash.length || !crypto.timingSafeEqual(new Uint8Array(Buffer.from(calc)), new Uint8Array(Buffer.from(hash)))) return { ok: false };
+    // подпись без срока годности можно переиспользовать вечно — принимаем не старше суток
+    const authDate = +(params.get("auth_date") || 0);
+    if (!authDate || Date.now() / 1000 - authDate > INIT_DATA_MAX_AGE_S) return { ok: false };
     const user = JSON.parse(params.get("user") || "{}");
     return { ok: true, user };
   } catch {
@@ -27,7 +30,31 @@ export function validateInitData(initData: string): { ok: boolean; user?: any } 
   }
 }
 
+const INIT_DATA_MAX_AGE_S = 24 * 3600;
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+
+// Новый человек (не из ADMIN_IDS) попадает в команду только после одобрения админа.
+// Админам приходит заявка с кнопками; до одобрения бот и приложение ничего ему не показывают.
+export async function requestAccess(userId: number, name: string, username: string | null): Promise<void> {
+  if (ENV_ADMINS.includes(userId)) return;
+  await d2.setMemberPending(userId, true);
+  const kb = new InlineKeyboard().text("✅ Пустить", `acc_ok:${userId}`).text("✖️ Отклонить", `acc_no:${userId}`);
+  const who = `${name || "Без имени"}${username ? " (@" + username + ")" : ""}, id ${userId}`;
+  for (const cid of await adminRecipients()) {
+    try { await bot.api.sendMessage(cid, `🆕 Заявка на доступ в бота: ${who}.\nПустить в команду?`, { reply_markup: kb }); } catch {}
+  }
+}
+export async function approveMember(id: number): Promise<void> {
+  if (!(await d2.isMemberPending(id))) return;
+  await d2.setMemberPending(id, false);
+  try { await bot.api.sendMessage(id, "✅ Доступ открыт. Приложение: /app"); } catch {}
+}
+export async function rejectMember(id: number): Promise<void> {
+  if (!(await d2.isMemberPending(id))) return; // уже одобренного так не удалить — только из «Команды»
+  await d2.removeMember(id);
+  try { await bot.api.sendMessage(id, "Доступ к боту не открыт."); } catch {}
+}
+export const PENDING_TEXT ="⏳ Заявка отправлена админу. Как только он одобрит, бот откроется.";
 
 // ---------- роли и вкладки ----------
 export function roleOf(member: db.Member | null, isAdmin: boolean): string {
@@ -293,7 +320,7 @@ async function serializeLeads() {
 }
 
 // ---------- сбор данных ----------
-export async function getData(userId: number) {
+export async function getData(userId: number, tgUser?: { first_name?: string; last_name?: string; username?: string }) {
   // один «залп» параллельных запросов вместо десятков последовательных
   const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10); // Asia/Tashkent
   const [member0, projects, plans, items, members, openTasks, subs, doneTasks, dailyTpl, dailyDone, dailyTotal] = await Promise.all([
@@ -301,11 +328,20 @@ export async function getData(userId: number) {
     d2.listDailyTemplates(), d2.dailyDoneToday(userId, today), d2.dailyAllTime(userId),
   ]);
   let member = member0;
-  if (!member) { member = await db.upsertMember({ telegram_id: userId, is_admin: ENV_ADMINS.includes(userId), lang: "ru" }); members.push(member); }
+  if (!member) {
+    member = await db.upsertMember({ telegram_id: userId, name: tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") || null : null, username: tgUser?.username || null, is_admin: ENV_ADMINS.includes(userId), lang: "ru" });
+    members.push(member);
+    await requestAccess(userId, member?.name || "", member?.username || null);
+  }
   const isAdmin = isAdminId(member, userId);
+  if (!isAdmin && (await d2.isMemberPending(userId))) {
+    return { pending: true, pendingText: PENDING_TEXT, user: { id: userId, name: member?.name || "", role: "member", roles: [], is_admin: false }, tabs: [] };
+  }
   const role = roleOf(member, isAdmin);
   const customTabs = await d2.getMemberTabs(userId);
   const memberRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
+  const hasRole = (r: string) => memberRoles.includes(r);
+  const isMgr = isAdmin || hasRole("manager");
   const tabs = withFinanceTab(customTabs
     ? Array.from(new Set(["home", ...customTabs.filter((t) => ALL_TABS.includes(t))]))
     : Array.from(new Set(memberRoles.flatMap((r) => TABS_BY_ROLE[r] || []))), isAdmin);
@@ -348,14 +384,14 @@ export async function getData(userId: number) {
   });
 
   const myTasks = memTasks(member!).filter((t) => t.status === "new" || t.status === "in_progress");
-  const canConfirm = role === "admin" || role === "manager";
+  const canConfirm = isMgr;
   const nameOf = (t: any) => {
     if (t.assignee_id) { const m = members.find((x) => x.telegram_id === t.assignee_id); return m?.name || t.assignee_name || "—"; }
     return t.assignee_name || "—";
   };
-  const needsMine = (t: any) => role === "admin"
+  const needsMine = (t: any) => isAdmin
     ? ["await_admin", "await_manager", "await_confirm"].includes(t.status)
-    : role === "manager" ? ["await_manager", "await_confirm"].includes(t.status) : false;
+    : hasRole("manager") ? ["await_manager", "await_confirm"].includes(t.status) : false;
   const confirmable = canConfirm
     ? openTasks.filter(needsMine).map((t) => ({ id: t.id, title: t.title, status: t.status, who: nameOf(t), final: t.status === "await_admin" }))
     : [];
@@ -462,7 +498,9 @@ export async function getData(userId: number) {
     const customTabsBulk = await d2.getMemberTabsBulk(members.map((m) => m.telegram_id));
     const groupsBulk = await d2.getMemberGroupsBulk(members.map((m) => m.telegram_id));
     const projectsBulk = await d2.getMemberProjectsBulk(members.map((m) => m.telegram_id));
-    teamAll = members.map((m) => ({ id: m.telegram_id, name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk, projectIds: projectsBulk[m.telegram_id] || [] }));
+    const pendingBulk = await d2.getPendingBulk(members.map((m) => m.telegram_id));
+    assignable = assignable.filter((a) => !pendingBulk.has(a.id)); // заявкам задачи не назначаем
+    teamAll = members.map((m) => ({ id: m.telegram_id, pending: pendingBulk.has(m.telegram_id), name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk, projectIds: projectsBulk[m.telegram_id] || [] }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
 
@@ -471,8 +509,9 @@ export async function getData(userId: number) {
   const calendarExtra = tabs.includes("calendar") ? await buildCalendarData(restrictedProjectIds) : { calendarShoots: [], calendarManagers: [] };
 
   let myWork: any[] = [];
-  if (role === "videographer" || role === "editor" || role === "designer") {
-    const stage = role === "videographer" ? "shoot" : role === "editor" ? "edit" : null;
+  // у человека может быть несколько рабочих ролей (напр. видеограф + монтажёр) — собираем работу по каждой
+  for (const workRole of ["videographer", "editor", "designer"].filter(hasRole)) {
+    const stage = workRole === "videographer" ? "shoot" : workRole === "editor" ? "edit" : null;
     for (const p of projOut) {
       const its = itemsByProject.get(p.id) || [];
       if (stage) {
@@ -487,7 +526,7 @@ export async function getData(userId: number) {
   // Meta (IG+Ads): последние 7 дневных снэпшотов — только для админа/менеджера
   const metaOn = await meta.metaConfigured();
   let metaOut: any = { configured: metaOn, days: [], map: {} };
-  if ((role === "admin" || role === "manager") && metaOn) {
+  if ((isMgr) && metaOn) {
     const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() + 5 * 3600 * 1000 - (i + 1) * 86400000).toISOString().slice(0, 10));
     const [map, ...snaps] = await Promise.all([meta.getMetaMap(), ...days.map((d) => meta.getSnapshot(d))]);
     metaOut = { configured: true, map, days: days.map((d, i) => ({ day: d, snap: snaps[i] })).filter((x) => x.snap) };
@@ -500,7 +539,8 @@ export async function getData(userId: number) {
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads, umcLeads,
     ...calendarExtra,
-    subscriptions: subs.map((s) => ({ id: s.id, app: s.app, expires_on: s.expires_on, purchased_on: s.purchased_on, period_days: s.period_days, price: s.price ?? null, currency: s.currency || "USD" })),
+    // подписки с ценами — только тем, у кого есть раздел «Подписки»
+    subscriptions: (tabs.includes("subs") ? subs : []).map((s) => ({ id: s.id, app: s.app, expires_on: s.expires_on, purchased_on: s.purchased_on, period_days: s.period_days, price: s.price ?? null, currency: s.currency || "USD" })),
     totals: { published: pub, videoTotal: vt, graphicDone: gd, graphicTotal: gt, openTasks: openTasks.length },
   };
 }
@@ -509,7 +549,16 @@ export async function getData(userId: number) {
 export async function doAction(userId: number, action: any) {
   const member = await db.getMember(userId);
   const isAdmin = isAdminId(member, userId);
-  const role = roleOf(member, isAdmin);
+  // ни одного действия от тех, кого нет в команде или чья заявка ещё не одобрена
+  if (!isAdmin && (!member || (await d2.isMemberPending(userId)))) return { error: PENDING_TEXT };
+  // права — по ВСЕМ ролям человека, а не только по первой (роли можно совмещать)
+  const memberRoles = isAdmin ? ["admin"] : db.memberRoleList(member);
+  const hasRole = (r: string) => memberRoles.includes(r);
+  const isMgr = isAdmin || hasRole("manager");
+  const isPlanner = isMgr || hasRole("pm");
+  // свою ли задачу трогает человек (исполнитель по id или по имени, если id не проставлен)
+  const isAssignee = async (t: { assignee_id: number | null; assignee_name?: string | null }) =>
+    t.assignee_id ? t.assignee_id === userId : !!t.assignee_name && (await d2.resolveMember(t.assignee_name))?.telegram_id === userId;
 
   if (typeof action.type === "string" && action.type.startsWith("fin_")) {
     if (!isAdmin) return { error: "нет доступа" };
@@ -522,8 +571,12 @@ export async function doAction(userId: number, action: any) {
       if (!item) break;
       const nx = nextVideoStage(item as any);
       if (!nx) break;
+      // двигать этап может планировщик или тот, чей это этап (видеограф — съёмку, монтажёр — монтаж):
+      // от этапа зависят сдельные начисления, поэтому кому попало нельзя
+      const stageOwners = [...(STAGE_OWNER_ROLES[item.stage] || []), ...(STAGE_OWNER_ROLES[nx] || [])];
+      if (!isPlanner && !stageOwners.some(hasRole)) return { error: "нет доступа к этому этапу" };
       // публикацию от не-админа отправляем на подтверждение, не двигаем сразу
-      if (nx === "published" && role !== "admin") {
+      if (nx === "published" && !isAdmin) {
         const open = await d2.listOpenTasks();
         if (!open.some((t) => t.item_id === item.id && t.status === "await_confirm")) {
           const proj = await d2.getProject(item.project_id);
@@ -543,8 +596,13 @@ export async function doAction(userId: number, action: any) {
       await notifyStage(item.project_id, item.idx, nx);
       break;
     }
-    case "vid_fmt": { await d2.updateItem(+action.id, { format: action.format }); break; }
+    case "vid_fmt": {
+      if (!isPlanner) return { error: "нет доступа" };
+      await d2.updateItem(+action.id, { format: action.format });
+      break;
+    }
     case "gfx_done": {
+      if (!isPlanner && !hasRole("designer")) return { error: "нет доступа" };
       const graphics = await d2.listItems(+action.projectId, "graphic");
       const next = graphics.find((g) => g.stage !== "done");
       if (next) { await d2.updateItem(next.id, { stage: "done", status: "done" }); await fin.onItemStage(next, next.stage, "done"); }
@@ -553,9 +611,10 @@ export async function doAction(userId: number, action: any) {
     case "task_done": {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
+      if (!isMgr && !(await isAssignee(t))) return { error: "это не твоя задача" };
       const assignee = t.assignee_id ? await db.getMember(t.assignee_id) : (t.assignee_name ? await d2.resolveMember(t.assignee_name) : null);
-      const aRole = assignee ? roleOf(assignee, isAdminId(assignee, assignee.telegram_id)) : "member";
-      const next = aRole === "manager" || aRole === "admin" ? "await_admin" : "await_manager";
+      const aRoles = !assignee ? [] : isAdminId(assignee, assignee.telegram_id) ? ["admin"] : db.memberRoleList(assignee);
+      const next = aRoles.includes("manager") || aRoles.includes("admin") ? "await_admin" : "await_manager";
       await d2.setTaskStatus(t.id, next);
       const who = member?.name || "Исполнитель";
       const recips = next === "await_admin" ? await adminRecipients() : await managerRecipients();
@@ -568,11 +627,11 @@ export async function doAction(userId: number, action: any) {
     case "task_approve": {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
-      if (role === "admin") {
+      if (isAdmin) {
         await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
         if (t.item_id) await publishItem(t.item_id);
         if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» полностью утверждена. Отлично!`); } catch {} }
-      } else if (role === "manager" && (t.status === "await_manager" || t.status === "await_confirm")) {
+      } else if (hasRole("manager") && (t.status === "await_manager" || t.status === "await_confirm")) {
         await d2.setTaskStatus(t.id, "await_admin");
         for (const cid of await adminRecipients()) { try { await bot.api.sendMessage(cid, `🔔 Менеджер утвердил «${t.title}». Нужно твоё финальное утверждение.`); } catch {} }
         if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `👍 Менеджер принял «${t.title}», ждём финального утверждения.`); } catch {} }
@@ -580,7 +639,7 @@ export async function doAction(userId: number, action: any) {
       break;
     }
     case "task_reject": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
       await d2.setTaskStatus(t.id, "in_progress");
@@ -588,14 +647,14 @@ export async function doAction(userId: number, action: any) {
       break;
     }
     case "task_delete": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const t = await d2.getTaskRow(+action.id);
       if (t?.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `🗑 Задачу «${t.title}» удалил админ.`); } catch {} }
       await d2.deleteTask(+action.id);
       return getData(userId);
     }
     case "task_assign": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       const title = (action.title || "").trim();
       if (!title || !action.assigneeId) break;
       const ex = await db.getMember(+action.assigneeId);
@@ -611,25 +670,25 @@ export async function doAction(userId: number, action: any) {
       break;
     }
     case "daily_add": {
-      if (role !== "admin") break;
+      if (!isAdmin) break;
       const title = (action.title || "").trim();
       if (title) await d2.createDailyTemplate(title, (action.who || "").trim());
       break;
     }
     case "daily_delete": {
-      if (role !== "admin") break;
+      if (!isAdmin) break;
       await d2.deleteTask(+action.id);
       break;
     }
     case "daily_edit": {
-      if (role !== "admin") break;
+      if (!isAdmin) break;
       const title = (action.title || "").trim();
       if (title) await d2.updateTaskTitle(+action.id, title);
       break;
     }
     // ---------- Meta (IG + Ads) ----------
     case "meta_status": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       if (!(await meta.metaConfigured())) return { configured: false };
       // сперва живая проверка токена: если он мёртв, список аккаунтов всё равно
       // вернётся пустым и скроет настоящую причину
@@ -639,21 +698,21 @@ export async function doAction(userId: number, action: any) {
       catch (e: any) { return { configured: true, token: chk, error: String(e.message || e) }; }
     }
     case "ai_check": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       return { ai: await aiCheck() };
     }
     case "meta_set_token": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const st = await meta.setToken(String(action.token || ""));
       return { configured: st.ok || (await meta.metaConfigured()), token: st, error: st.ok ? undefined : st.error };
     }
     case "meta_bind": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await meta.setMetaBinding(String(action.projectKey), action.field === "ad" ? "ad" : "ig", String(action.value || "").trim());
       return { map: await meta.getMetaMap() };
     }
     case "analytics_ads": {
-      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      if (!isMgr) return { error: "нет доступа" };
       const map = await meta.getMetaMap();
       const b = map[String(action.projectKey)] || {};
       if (!b.ad) return { error: "К проекту не привязан рекламный кабинет" };
@@ -664,7 +723,7 @@ export async function doAction(userId: number, action: any) {
       } catch (e: any) { return { error: String(e.message || e) }; }
     }
     case "analytics_media": {
-      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      if (!isMgr) return { error: "нет доступа" };
       const map = await meta.getMetaMap();
       const b = map[String(action.projectKey)] || {};
       if (!b.ig) return { error: "К проекту не привязан Instagram-аккаунт" };
@@ -677,7 +736,7 @@ export async function doAction(userId: number, action: any) {
       } catch (e: any) { return { error: String(e.message || e) }; }
     }
     case "analytics_compare": {
-      if (role !== "admin" && role !== "manager") return { error: "нет доступа" };
+      if (!isMgr) return { error: "нет доступа" };
       const map = await meta.getMetaMap();
       const projects = await d2.getActiveProjects();
       const rows: any[] = [];
@@ -702,42 +761,48 @@ export async function doAction(userId: number, action: any) {
       return { rows };
     }
     case "meta_pull": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const day = String(action.day || new Date(Date.now() + 5 * 3600 * 1000 - 86400000).toISOString().slice(0, 10));
       try { return { day, snap: await meta.pullSnapshot(day) }; }
       catch (e: any) { return { error: String(e.message || e) }; }
     }
     // ---------- команда: явное назначение ролей (человек может совмещать несколько) ----------
     case "team_set_roles": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const target = +action.id;
       const makeAdmin = !!action.isAdmin;
       if (target === userId && !makeAdmin) return { error: "нельзя снять роль админа с самого себя" };
       const roles = Array.isArray(action.roles) ? action.roles.map((r: any) => String(r)) : [];
       await d2.setTeamRoles(target, roles, makeAdmin);
+      await d2.setMemberPending(target, false); // назначил роли — значит пустил в команду
+      return getData(userId);
+    }
+    case "team_approve": {
+      if (!isAdmin) return { error: "нет доступа" };
+      await approveMember(+action.id);
       return getData(userId);
     }
     case "team_set_projects": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const target = +action.id;
       const ids = Array.isArray(action.projectIds) ? action.projectIds.map((n: any) => +n).filter((n: number) => !Number.isNaN(n)) : [];
       await d2.setMemberProjects(target, ids.length ? ids : null);
       return getData(userId);
     }
     case "team_delete": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const target = +action.id;
       if (target === userId) return { error: "нельзя удалить самого себя" };
       await d2.removeMember(target);
       return getData(userId);
     }
     case "team_unbind_group": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await d2.setMemberGroup(+action.id, null);
       return getData(userId);
     }
     case "team_set_tabs": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const target = +action.id;
       const list = Array.isArray(action.tabs) ? action.tabs.filter((t: any) => ALL_TABS.includes(t)) : null;
       await d2.setMemberTabs(target, list && list.length ? list : null);
@@ -745,7 +810,7 @@ export async function doAction(userId: number, action: any) {
     }
     // ---------- проекты: создание с описанием + архив ----------
     case "project_create": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const name = (action.name || "").trim();
       if (!name) return { error: "укажи название проекта" };
       const proj = await d2.createProject(name, (action.description || "").trim());
@@ -753,17 +818,17 @@ export async function doAction(userId: number, action: any) {
       return getData(userId);
     }
     case "project_archive": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await d2.setProjectArchived(+action.id, true);
       return getData(userId);
     }
     case "project_unarchive": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await d2.setProjectArchived(+action.id, false);
       return getData(userId);
     }
     case "project_set_brief": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const f = action.brief || {};
       const brief: Record<string, string> = {};
       for (const [k] of ideas.BRIEF_FIELDS) brief[k] = String(f[k] || "").trim().slice(0, 600);
@@ -772,7 +837,7 @@ export async function doAction(userId: number, action: any) {
     }
     // пробная генерация из приложения — в историю идей и в рассылку не попадает
     case "ideas_preview": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       if (!aiConfigured()) return { error: "AI не настроен: нет GEMINI_API_KEY" };
       try {
         const rec = await ideas.generateForProject(+action.id, ideas.localDay(), false, 50000);
@@ -782,12 +847,12 @@ export async function doAction(userId: number, action: any) {
       } catch (e: any) { return { error: String(e?.message || e) }; }
     }
     case "project_set_desc": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await d2.setProjectDescription(+action.id, String(action.description || "").trim());
       return getData(userId);
     }
     case "plan_active_items": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const plan = await d2.getActivePlan(+action.projectId);
       if (!plan) return { items: [] };
       // видео без съёмки в календарь съёмок не предлагаем
@@ -797,21 +862,30 @@ export async function doAction(userId: number, action: any) {
     case "task_submit_file": {
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
+      if (!isMgr && !(await isAssignee(t))) return { error: "это не твоя задача" };
       await db.setSession(userId, { awaitFileTask: t.id } as any);
       try { await bot.api.sendMessage(userId, `📎 Пришли сюда файл готовой работы по задаче «${t.title}». Как получу — отправлю в группу проекта и передам на утверждение.`); } catch {}
       break;
     }
     case "task_confirm": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       const t = await d2.getTaskRow(+action.id);
       if (!t) break;
+      if (!isAdmin) {
+        // менеджер только принимает работу — финально закрывает (и публикует видео) админ
+        if (t.status !== "await_manager" && t.status !== "await_confirm") break;
+        await d2.setTaskStatus(t.id, "await_admin");
+        for (const cid of await adminRecipients()) { if (cid === userId) continue; try { await bot.api.sendMessage(cid, `🔔 Менеджер утвердил «${t.title}». Нужно твоё финальное утверждение.`); } catch {} }
+        if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `👍 Менеджер принял «${t.title}», ждём финального утверждения.`); } catch {} }
+        break;
+      }
       await d2.setTaskStatus(t.id, "done", { confirmed_by: userId });
       if (t.item_id) await publishItem(t.item_id); // подтверждённая публикация
       if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Твоя задача «${t.title}» подтверждена.`); } catch {} }
       break;
     }
     case "tz": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       const sec = (SECTION as any)[action.section];
       const text = (action.text || "").trim();
       if (!sec || !text) break;
@@ -837,7 +911,7 @@ export async function doAction(userId: number, action: any) {
     // AI-раскадровка монтажа: генерируется по кнопке в карточке и остаётся в самом пункте
     // (копируется вручную) — пока монтажёр не подключён к боту как получатель сообщений.
     case "item_ai_tz": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const items0 = await d2.listItemsByPlan(+action.planId);
       if (!aiConfigured()) return { items: items0.map(serializeItem), error: "AI не настроен: нет GEMINI_API_KEY" };
       const it = await d2.getItem(+action.id);
@@ -905,22 +979,22 @@ export async function doAction(userId: number, action: any) {
 
     // ---- редактируемая таблица контент-плана ----
     case "plan_items": {
-      if (role === "admin" || role === "manager") await resortPlan(+action.planId);
+      if (isMgr) await resortPlan(+action.planId);
       const its = await d2.listItemsByPlan(+action.planId);
       return { items: its.map(serializeItem) };
     }
     case "item_add": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const its = await d2.listItemsByPlan(+action.planId);
       const nextIdx = its.reduce((m, i) => Math.max(m, i.idx), 0) + 1;
       await d2.addContentItem({ plan_id: +action.planId, project_id: +action.projectId, type: action.itemType || "video", idx: nextIdx });
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_update": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const item0 = await d2.getItem(+action.id);
       const prevData0 = item0 ? parseItemData((item0 as any).title) : {};
-      if (prevData0.locked && role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
+      if (prevData0.locked && !isAdmin) return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const f = action.fields || {};
       const frames = Array.isArray(f.frames) ? f.frames : [];
       const scriptFromFrames = frames.length ? framesToText(frames) : "";
@@ -941,12 +1015,12 @@ export async function doAction(userId: number, action: any) {
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_patch": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const it = await d2.getItem(+action.id);
       if (!it) return { items: [] };
       const planId = action.planId ? +action.planId : it.plan_id; // календарь вызывает это вне контекста открытого периода
       const d = parseItemData((it as any).title);
-      if (d.locked && role !== "admin") return { items: (await d2.listItemsByPlan(planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
+      if (d.locked && !isAdmin) return { items: (await d2.listItemsByPlan(planId)).map(serializeItem), error: "Сценарий заблокирован админом — редактировать нельзя" };
       const p = action.patch || {};
       for (const k of ["theme", "script", "reference", "props", "location", "shoot_date", "shoot_time", "shoot_manager", "deadline", "target_only", "no_shoot"]) if (k in p) (d as any)[k] = p[k];
       applyVideoFlags(d);
@@ -965,7 +1039,7 @@ export async function doAction(userId: number, action: any) {
     // ---- недельный план: обычные задачи с дедлайном внутри выбранной недели ----
     // (не отдельная таблица — так они попадают в «Мои задачи», напоминания и статистику)
     case "week_tasks": {
-      const canPlan = isAdmin || role === "manager" || db.memberRoleList(member).includes("pm");
+      const canPlan = isAdmin || hasRole("manager") || db.memberRoleList(member).includes("pm");
       const all = await d2.allTasksBulk();
       const fromMs = weekDayMs(String(action.weekStart || ""), 0);
       if (fromMs === null) return { weekTasks: [], weekPlanner: canPlan };
@@ -986,7 +1060,7 @@ export async function doAction(userId: number, action: any) {
       };
     }
     case "week_add": {
-      if (!isAdmin && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isPlanner) return { error: "нет доступа" };
       const title = String(action.title || "").trim();
       const day = String(action.day || "");
       const assigneeId = +action.assigneeId;
@@ -1003,7 +1077,7 @@ export async function doAction(userId: number, action: any) {
     // ---- подписки: раньше их можно было только посмотреть, добавить — командой /addsub,
     // а отредактировать или удалить вообще никак ----
     case "sub_add": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const f = action.fields || {};
       const app = String(f.app || "").trim();
       if (!app) return { error: "укажи название подписки" };
@@ -1022,7 +1096,7 @@ export async function doAction(userId: number, action: any) {
       return getData(userId);
     }
     case "sub_update": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const f = action.fields || {};
       const patch: any = {};
       if (f.app !== undefined) { const a = String(f.app).trim(); if (!a) return { error: "название не может быть пустым" }; patch.app = a; }
@@ -1043,7 +1117,7 @@ export async function doAction(userId: number, action: any) {
       return getData(userId);
     }
     case "sub_renew": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       const sub = await d2.getSubscription(+action.id);
       if (!sub) return { error: "подписка не найдена" };
       const today = new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1057,7 +1131,7 @@ export async function doAction(userId: number, action: any) {
       return getData(userId);
     }
     case "sub_delete": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       try { await d2.archiveSubscription(+action.id); }
       catch (e: any) { return { error: "не удалось удалить: " + String(e?.message || e) }; }
       return getData(userId);
@@ -1067,11 +1141,11 @@ export async function doAction(userId: number, action: any) {
     // отдельной таблицы нет намеренно: та же сущность, только свой раздел и свои поля,
     // поэтому в «Таблице» контент-плана сторис отфильтрованы и в его статистику не идут
     case "stories_list": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       return { stories: await serializeStories(+action.projectId) };
     }
     case "story_add": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const pid = +action.projectId;
       const plan = await d2.getActivePlan(pid);
       if (!plan) return { error: "у проекта нет активного периода — создай его в Таблице" };
@@ -1086,7 +1160,7 @@ export async function doAction(userId: number, action: any) {
       return { stories: await serializeStories(pid) };
     }
     case "story_update": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const it = await d2.getItem(+action.id);
       if (!it) return { error: "сторис не найдена" };
       const f = action.fields || {};
@@ -1099,7 +1173,7 @@ export async function doAction(userId: number, action: any) {
       return { stories: await serializeStories(it.project_id) };
     }
     case "story_attach": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const it = await d2.getItem(+action.id);
       if (!it) return { error: "сторис не найдена" };
       await db.setSession(userId, { awaitStoryFile: it.id } as any);
@@ -1108,7 +1182,7 @@ export async function doAction(userId: number, action: any) {
       return { ok: true };
     }
     case "story_detach": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const it = await d2.getItem(+action.id);
       if (!it) return { error: "сторис не найдена" };
       const d = parseItemData((it as any).title);
@@ -1117,7 +1191,7 @@ export async function doAction(userId: number, action: any) {
       return { stories: await serializeStories(it.project_id) };
     }
     case "story_delete": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const it = await d2.getItem(+action.id);
       if (!it) return { error: "сторис не найдена" };
       await d2.deleteContentItem(it.id);
@@ -1126,7 +1200,7 @@ export async function doAction(userId: number, action: any) {
 
     // ---- отчёт клиенту в его группу ----
     case "client_report_preview": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const pid = +action.projectId;
       const planId = action.planId ? +action.planId : null;
       const { buildClientReport, clientPlan } = await import("./views");
@@ -1134,7 +1208,7 @@ export async function doAction(userId: number, action: any) {
       return { reportText: text, clientGroups: groups.length, report: { project: proj?.name || "", ...cp } };
     }
     case "client_report_send": {
-      if (role !== "admin" && role !== "manager" && !db.memberRoleList(member).includes("pm")) return { error: "нет доступа" };
+      if (!isMgr && !hasRole("pm")) return { error: "нет доступа" };
       const pid = +action.projectId;
       const target = action.target === "me" ? "me" : "client";
       const groups = target === "client" ? await d2.clientBindings(pid) : [];
@@ -1198,7 +1272,7 @@ export async function doAction(userId: number, action: any) {
       return { ...result, skippedLocked };
     }
     case "item_lock": {
-      if (role !== "admin") return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };
+      if (!isAdmin) return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem), error: "нет доступа" };
       const it = await d2.getItem(+action.id);
       if (!it) return { items: [] };
       const d = parseItemData((it as any).title);
@@ -1207,7 +1281,7 @@ export async function doAction(userId: number, action: any) {
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_delete": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       await d2.deleteContentItem(+action.id);
       // после удаления — сквозная перенумерация
       const rest = (await d2.listItemsByPlan(+action.planId));
@@ -1215,7 +1289,7 @@ export async function doAction(userId: number, action: any) {
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "item_move": {
-      if (role !== "admin" && role !== "manager") return { items: [] };
+      if (!isMgr) return { items: [] };
       const items = await d2.listItemsByPlan(+action.planId);
       const moving = items.find((x) => x.id === +action.id);
       if (moving) {
@@ -1228,7 +1302,7 @@ export async function doAction(userId: number, action: any) {
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
     case "plan_create": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       const planId = await d2.createPlan(+action.projectId, (action.period || "Новый период").trim());
       // первый период проекта сразу делаем активным — иначе он не попадает в прогресс и отчёты
       if (planId && !(await d2.getActivePlan(+action.projectId))) await d2.setPlanActive(+action.projectId, planId);
@@ -1244,12 +1318,12 @@ export async function doAction(userId: number, action: any) {
       break;
     }
     case "plan_set_active": {
-      if (role !== "admin" && role !== "manager") break;
+      if (!isMgr) break;
       await d2.setPlanActive(+action.projectId, +action.planId);
       break;
     }
     case "plan_delete": {
-      if (role !== "admin") return { error: "нет доступа" };
+      if (!isAdmin) return { error: "нет доступа" };
       await d2.deletePlan(+action.planId);
       break;
     }
