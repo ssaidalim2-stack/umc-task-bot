@@ -847,15 +847,18 @@ if(!IS_MOBILE_TG && tg.requestFullscreen && tg.exitFullscreen && tg.isVersionAtL
     if(FS_SUSPENDED && fsWanted() && !tg.isFullscreen){ try{ tg.requestFullscreen(); }catch(e){ fsLog('req err '+e); } }
     FS_SUSPENDED=false;
   };
-  try{ tg.onEvent('deactivated', ()=>fsSuspend('tg')); tg.onEvent('activated', ()=>fsResume('tg')); }catch(e){}
+  // Возвращаем полный экран ТОЛЬКО когда окно бота реально получило фокус. Сигналы Telegram «activated»
+  // и «страница видна» приходят и когда ты уже в другой программе — от них полный экран включался обратно
+  // и полоса снова торчала поверх (видно на записи экрана). Их используем только для выхода.
+  try{ tg.onEvent('deactivated', ()=>fsSuspend('tg')); tg.onEvent('activated', ()=>fsLog('activated (ignored)')); }catch(e){}
   window.addEventListener('blur',()=>{ clearTimeout(FS_BLUR_T); FS_BLUR_T=setTimeout(()=>{ if(!document.hasFocus()) fsSuspend('blur'); },300); });
-  window.addEventListener('focus',()=>fsResume('focus'));
-  document.addEventListener('visibilitychange',()=>{ document.hidden ? fsSuspend('hidden') : fsResume('visible'); });
+  window.addEventListener('focus',()=>{ setTimeout(()=>{ if(document.hasFocus()) fsResume('focus'); else fsLog('focus w/o hasFocus'); },150); });
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) fsSuspend('hidden'); else fsLog('visible (ignored)'); });
   try{ tg.onEvent('fullscreenChanged', ()=>fsLog('fullscreenChanged')); tg.onEvent('fullscreenFailed', (e)=>fsLog('fullscreenFailed '+JSON.stringify(e||{}))); }catch(e){}
 }
 // Диагностика полного экрана: 5 быстрых нажатий на логотип — панель с журналом событий.
 // Нужна, чтобы увидеть, какие сигналы Telegram Desktop на самом деле присылает.
-const FS_BUILD='fs3';
+const FS_BUILD='fs4';
 function fsShowLog(){
   const el=document.createElement('div');
   el.style.cssText='position:fixed;inset:10% 5%;z-index:99999;background:#111;color:#0f0;font:12px/1.4 monospace;padding:12px;overflow:auto;border-radius:10px;white-space:pre-wrap';
