@@ -751,7 +751,7 @@
   </g></symbol></svg>
 <div id="splash"></div>
 <header>
-  <div class="hrow"><h1 id="brand"></h1><button id="themeBtn" class="thbtn" title="Тема оформления"></button></div>
+  <div class="hrow"><h1 id="brand"></h1><button id="fsBtn" class="thbtn" title="Полный экран" style="display:none"></button><button id="themeBtn" class="thbtn" title="Тема оформления"></button></div>
   <div class="sub" id="period">загрузка…</div>
 </header>
 <div class="wrap" id="view"></div>
@@ -801,11 +801,22 @@ function hideSplash(){ const sp=document.getElementById('splash'); if(sp) sp.cla
 // поверх других программ и не даёт менять размер окна — там обычное окно, его можно тянуть
 const IS_MOBILE_TG = ['ios','android','android_x'].includes(tg.platform);
 try{ if(IS_MOBILE_TG && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
-// на ПК полный экран мог остаться с прошлых версий (или его включили в настройках бота) — выходим из него
-// сразу и каждый раз, когда Telegram снова его включит, чтобы окно можно было свернуть и тянуть
-function leaveDesktopFullscreen(){ try{ if(!IS_MOBILE_TG && tg.isFullscreen && tg.exitFullscreen) tg.exitFullscreen(); }catch(e){} }
-leaveDesktopFullscreen();
-try{ tg.onEvent && tg.onEvent('fullscreenChanged', leaveDesktopFullscreen); }catch(e){}
+// на ПК полный экран — по выбору человека: кнопка ⛶ в шапке включает и выключает его, выбор
+// запоминается на этом компьютере. По умолчанию обычное окно (его можно свернуть и тянуть).
+const FS_KEY='umc_desktop_fullscreen';
+function fsWanted(){ try{ return localStorage.getItem(FS_KEY)==='1'; }catch(e){ return false; } }
+function paintFsBtn(){ const b=document.getElementById('fsBtn'); if(b) b.textContent=tg.isFullscreen?'🗗':'⛶'; }
+function toggleDesktopFullscreen(){
+  const on=!tg.isFullscreen;
+  try{ localStorage.setItem(FS_KEY,on?'1':'0'); }catch(e){}
+  try{ on ? tg.requestFullscreen() : tg.exitFullscreen(); }catch(e){}
+}
+if(!IS_MOBILE_TG && tg.requestFullscreen && tg.exitFullscreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')){
+  try{ if(fsWanted() && !tg.isFullscreen) tg.requestFullscreen(); else if(!fsWanted() && tg.isFullscreen) tg.exitFullscreen(); }catch(e){}
+  const b=document.getElementById('fsBtn'); if(b){ b.style.display=''; b.onclick=toggleDesktopFullscreen; }
+  paintFsBtn();
+  try{ tg.onEvent('fullscreenChanged', paintFsBtn); }catch(e){}
+}
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
