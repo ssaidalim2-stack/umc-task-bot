@@ -804,6 +804,8 @@ try{ if(IS_MOBILE_TG && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.
 // на ПК полный экран — по выбору человека: кнопка ⛶ в шапке включает и выключает его, выбор
 // запоминается на этом компьютере. По умолчанию обычное окно (его можно свернуть и тянуть).
 const FS_KEY='umc_desktop_fullscreen';
+const FS_LOG=[];
+function fsLog(m){ const d=new Date(); FS_LOG.push(d.toTimeString().slice(0,8)+' '+m+' fs='+tg.isFullscreen+' act='+tg.isActive); if(FS_LOG.length>40) FS_LOG.shift(); }
 function fsWanted(){ try{ return localStorage.getItem(FS_KEY)==='1'; }catch(e){ return false; } }
 function paintFsBtn(){ const b=document.getElementById('fsBtn'); if(b) b.textContent=tg.isFullscreen?'🗗':'⛶'; }
 function toggleDesktopFullscreen(){
@@ -831,19 +833,36 @@ if(!IS_MOBILE_TG && tg.requestFullscreen && tg.exitFullscreen && tg.isVersionAtL
       try{ return orig.apply(tg,args); }catch(e){ done(); throw e; }
     };
   });
-  window.addEventListener('blur',()=>{
+  // Уход из окна ловим тремя способами: события Telegram (activated/deactivated, Bot API 8.0),
+  // потеря фокуса окна и скрытие страницы — Telegram Desktop шлёт не всё из этого.
+  const fsSuspend=(why)=>{
+    fsLog('suspend:'+why);
+    if(POPUP_OPEN) return;
+    if(!(tg.isFullscreen || fsWanted())) return;
+    FS_SUSPENDED=true; try{ tg.exitFullscreen(); }catch(e){ fsLog('exit err '+e); }
+  };
+  const fsResume=(why)=>{
+    fsLog('resume:'+why);
     clearTimeout(FS_BLUR_T);
-    FS_BLUR_T=setTimeout(()=>{
-      if(POPUP_OPEN || document.hasFocus() || !tg.isFullscreen) return;
-      FS_SUSPENDED=true; try{ tg.exitFullscreen(); }catch(e){}
-    },300);
-  });
-  window.addEventListener('focus',()=>{
-    clearTimeout(FS_BLUR_T);
-    if(FS_SUSPENDED && fsWanted() && !tg.isFullscreen){ try{ tg.requestFullscreen(); }catch(e){} }
+    if(FS_SUSPENDED && fsWanted() && !tg.isFullscreen){ try{ tg.requestFullscreen(); }catch(e){ fsLog('req err '+e); } }
     FS_SUSPENDED=false;
-  });
+  };
+  try{ tg.onEvent('deactivated', ()=>fsSuspend('tg')); tg.onEvent('activated', ()=>fsResume('tg')); }catch(e){}
+  window.addEventListener('blur',()=>{ clearTimeout(FS_BLUR_T); FS_BLUR_T=setTimeout(()=>{ if(!document.hasFocus()) fsSuspend('blur'); },300); });
+  window.addEventListener('focus',()=>fsResume('focus'));
+  document.addEventListener('visibilitychange',()=>{ document.hidden ? fsSuspend('hidden') : fsResume('visible'); });
+  try{ tg.onEvent('fullscreenChanged', ()=>fsLog('fullscreenChanged')); tg.onEvent('fullscreenFailed', (e)=>fsLog('fullscreenFailed '+JSON.stringify(e||{}))); }catch(e){}
 }
+// Диагностика полного экрана: 5 быстрых нажатий на логотип — панель с журналом событий.
+// Нужна, чтобы увидеть, какие сигналы Telegram Desktop на самом деле присылает.
+const FS_BUILD='fs3';
+function fsShowLog(){
+  const el=document.createElement('div');
+  el.style.cssText='position:fixed;inset:10% 5%;z-index:99999;background:#111;color:#0f0;font:12px/1.4 monospace;padding:12px;overflow:auto;border-radius:10px;white-space:pre-wrap';
+  el.textContent=['build '+FS_BUILD,'platform '+tg.platform+' · version '+tg.version,'isFullscreen '+tg.isFullscreen+' · isActive '+tg.isActive+' · wanted '+fsWanted(),'',...FS_LOG].join('\n')+'\n\n(нажми, чтобы закрыть)';
+  el.onclick=()=>el.remove(); document.body.appendChild(el);
+}
+(function(){ let n=0,t=0; document.addEventListener('click',e=>{ if(!e.target.closest||!e.target.closest('#brand')) return; const now=Date.now(); n=(now-t<600)?n+1:1; t=now; if(n>=5){ n=0; fsShowLog(); } }); })();
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
