@@ -816,6 +816,33 @@ if(!IS_MOBILE_TG && tg.requestFullscreen && tg.exitFullscreen && tg.isVersionAtL
   const b=document.getElementById('fsBtn'); if(b){ b.style.display=''; b.onclick=toggleDesktopFullscreen; }
   paintFsBtn();
   try{ tg.onEvent('fullscreenChanged', paintFsBtn); }catch(e){}
+  // Полноэкранное окно Telegram Desktop остаётся поверх панели задач Windows: переключился в другую
+  // программу — а нижняя полоса бота торчит поверх неё. Поэтому, пока окно бота не в фокусе,
+  // выходим из полного экрана, а когда вернулся — включаем снова (если ты его выбирал).
+  // Свои всплывающие окна Telegram (alert/confirm) тоже снимают фокус — их не считаем.
+  let FS_SUSPENDED=false, POPUP_OPEN=0, FS_BLUR_T=null;
+  ['showAlert','showConfirm','showPopup'].forEach(fn=>{
+    const orig=tg[fn]; if(typeof orig!=='function') return;
+    tg[fn]=function(...args){
+      POPUP_OPEN++;
+      const done=()=>{ POPUP_OPEN=Math.max(0,POPUP_OPEN-1); };
+      const cbi=args.findIndex(a=>typeof a==='function');
+      if(cbi>=0){ const cb=args[cbi]; args[cbi]=(...r)=>{ done(); return cb(...r); }; } else args.push(()=>done());
+      try{ return orig.apply(tg,args); }catch(e){ done(); throw e; }
+    };
+  });
+  window.addEventListener('blur',()=>{
+    clearTimeout(FS_BLUR_T);
+    FS_BLUR_T=setTimeout(()=>{
+      if(POPUP_OPEN || document.hasFocus() || !tg.isFullscreen) return;
+      FS_SUSPENDED=true; try{ tg.exitFullscreen(); }catch(e){}
+    },300);
+  });
+  window.addEventListener('focus',()=>{
+    clearTimeout(FS_BLUR_T);
+    if(FS_SUSPENDED && fsWanted() && !tg.isFullscreen){ try{ tg.requestFullscreen(); }catch(e){} }
+    FS_SUSPENDED=false;
+  });
 }
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
