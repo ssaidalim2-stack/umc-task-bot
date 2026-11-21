@@ -59,16 +59,19 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   sent += await deadlineReminders(now);
   sent += await subscriptionReminders(day);
 
-  // дайджест задач 2×/день: утром — что сегодня, вечером — что осталось
+  // уборка: задачи по пунктам плана, чей этап уже пройден (ТЗ на монтаж опубликованного видео и т.п.)
+  if (await d2.claimMarker("close_stale_tasks", day)) { try { await d2.closeStaleItemTasks(); } catch (e) { console.error("close stale", e); } }
+
+  // личный утренний дайджест задач
   if (due(8, 4) && (await d2.claimMarker("digest_8", day))) sent += await sendDigests("morning");
-  if (due(20, 3) && (await d2.claimMarker("digest_20", day))) sent += await sendDigests("evening");
+  // вечерний личный дайджест убран: дублировал вечерние итоги в группе команды
 
   // сторис на сегодня — утром, с прикреплённым материалом
   if (due(9, 4) && (await d2.claimMarker("stories_today", day))) sent += await storyReminders(day);
 
   // сводки в группу команды: утром задачи на день, вечером итоги
-  if (due(10, 4) && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(await buildTeamMorning());
-  if (due(22, 2) && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(await buildTeamEvening());
+  if (due(10, 4) && (await d2.claimMarker("team_morning", day))) sent += await sendToTeam(buildTeamMorning);
+  if (due(22, 2) && (await d2.claimMarker("team_evening", day))) sent += await sendToTeam(buildTeamEvening);
 
   // отчёты админам и съёмки (у напоминаний о съёмках свои маркеры на каждый пункт)
   if (due(8, 6)) {
@@ -106,8 +109,7 @@ async function deadlineReminders(now: number): Promise<number> {
     if (diff <= 0 && !task.reminded_overdue) {
       const msg = t(lang, "remind_overdue_assignee", { id: task.id, title: task.title });
       await safeSend(task.assignee_id, msg); await alsoToGroup(msg);
-      for (const a of await db.listAdmins())
-        await safeSend(a.telegram_id, t(langOf(a), "remind_overdue_admin", { id: task.id, title: task.title, assignee: assignee?.name || String(task.assignee_id) }));
+      // админам каждую просрочку отдельным сообщением больше не шлём — они видят их в вечерних итогах группы
       await db.markReminded(task.id, "reminded_overdue"); sent++;
     } else if (diff > 0 && diff <= 24 * HOUR && !task.reminded_24h) {
       // ступень «за 1 час» убрана: раздражала больше, чем помогала
@@ -172,6 +174,8 @@ async function sendDigests(part: "morning" | "evening"): Promise<number> {
   const members = await db.listMembers();
   // у кого сегодня утренние идеи — им задачи придут в том же сообщении, без дубля
   const skip = new Set<number>(part === "morning" && ideas.ideasDay() ? (await ideas.recipients()).map((r) => r.member.telegram_id) : []);
+  // кто в группе команды — свои задачи и так видит в утренней сводке группы
+  for (const id of await inAnyTeamGroup(members.map((m) => m.telegram_id))) skip.add(id);
   let sent = 0;
   for (const m of members) {
     if (skip.has(m.telegram_id)) continue;
@@ -196,10 +200,11 @@ async function storyReminders(day: string): Promise<number> {
   const [plans, items, projects] = await Promise.all([d2.getAllActivePlans(), d2.getAllItems(), d2.getProjects()]);
   const activeIds = new Set(plans.map((p) => p.id));
   const projById = new Map(projects.map((p) => [p.id, p]));
-  const recips = new Set<number>(ENV_ADMINS);
-  for (const a of await db.listAdmins()) recips.add(a.telegram_id);
+  // сторис выставляют менеджеры; админу — только если менеджеров нет
+  const recips = new Set<number>();
   for (const m of await d2.membersWithRole("manager")) recips.add(m.telegram_id);
   for (const m of await d2.membersWithRole("pm")) recips.add(m.telegram_id);
+  if (!recips.size) { ENV_ADMINS.forEach((id) => recips.add(id)); for (const a of await db.listAdmins()) recips.add(a.telegram_id); }
 
   let sent = 0;
   for (const it of items) {
@@ -240,14 +245,35 @@ async function sendStoryFile(chatId: number, file: { id: string; kind: string },
 }
 
 // ---------- сводки в группу команды ----------
-async function sendToTeam(text: string): Promise<number> {
-  if (!text.trim()) return 0;
+// В каждую группу команды — только задачи тех, кто в этой группе состоит (проверяем у Telegram)
+async function sendToTeam(build: (keep: (id: number) => boolean) => Promise<string>): Promise<number> {
   let sent = 0;
+  const members = await db.listMembers();
   for (const b of await d2.teamBindings()) {
+    const inChat = await chatMemberIds(b.chat_id, members.map((m) => m.telegram_id));
+    if (!inChat.size) continue;
+    const text = await build((id) => inChat.has(id));
+    if (!text.trim()) continue;
     try { await bot.api.sendMessage(b.chat_id, text, { parse_mode: "Markdown" }); sent++; }
     catch { try { await bot.api.sendMessage(b.chat_id, text); sent++; } catch {} }
   }
   return sent;
+}
+export async function chatMemberIds(chatId: number, ids: number[]): Promise<Set<number>> {
+  const out = new Set<number>();
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const cm = await bot.api.getChatMember(chatId, id);
+      if (["creator", "administrator", "member"].includes(cm.status) || (cm.status === "restricted" && (cm as any).is_member)) out.add(id);
+    } catch { /* не в группе или Telegram не знает такого — пропускаем */ }
+  }));
+  return out;
+}
+// кто из команды состоит хотя бы в одной группе команды — им личный дайджест не нужен, всё видно в группе
+async function inAnyTeamGroup(ids: number[]): Promise<Set<number>> {
+  const out = new Set<number>();
+  for (const b of await d2.teamBindings()) for (const id of await chatMemberIds(b.chat_id, ids)) out.add(id);
+  return out;
 }
 
 // ---------- отчёты ----------
@@ -282,10 +308,11 @@ async function shootReminders(day: string): Promise<number> {
     const when = daysUntil === 0 ? "СЕГОДНЯ" : "через 2 дня";
     const theme = data.theme ? ` — ${data.theme}` : "";
     const msg = `🎥 Съёмка ${when}!\n${proj?.name || ""} Видео #${it.idx}${theme}\nДата: ${data.shoot_date}`;
-    const recips = new Set<number>(ENV_ADMINS);
-    for (const a of await db.listAdmins()) recips.add(a.telegram_id);
+    // о съёмке — видеографам и менеджерам; админу — только если их нет
+    const recips = new Set<number>();
     for (const m of await d2.membersWithRole("videographer")) recips.add(m.telegram_id);
     for (const m of await d2.membersWithRole("manager")) recips.add(m.telegram_id);
+    if (!recips.size) { ENV_ADMINS.forEach((id) => recips.add(id)); for (const a of await db.listAdmins()) recips.add(a.telegram_id); }
     for (const cid of recips) { try { await bot.api.sendMessage(cid, msg); sent++; } catch {} }
   }
   return sent;

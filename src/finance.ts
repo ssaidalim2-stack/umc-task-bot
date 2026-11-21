@@ -121,11 +121,13 @@ async function insertAuto(rows: any[]): Promise<void> {
 // Создаются только для текущего цикла: прошлые не трогаем, будущие появятся сами.
 export async function ensureCycle(c: string = currentCycle()): Promise<void> {
   if (c !== currentCycle()) return;
-  const [tms, rls, fx] = await Promise.all([terms(), rules(), getRate()]);
+  const [tms, rls, fx, live] = await Promise.all([terms(), rules(), getRate(), d2.getActiveProjects()]);
+  const liveIds = new Set(live.map((p) => p.id));
   const { start, end } = cycleBounds(c);
   const rows: any[] = [];
   for (const t of tms) {
     if (!t.active || t.fee <= 0 || t.schedule === "manual") continue;
+    if (!liveIds.has(t.project_id)) continue; // проект в архиве — оплат от него больше не ждём
     if (t.start_cycle && t.start_cycle > c) continue;
     const parts: [number, string][] = t.schedule === "split" ? [[0.5, start], [0.5, end]] : t.schedule === "post" ? [[1, end]] : [[1, start]];
     parts.forEach(([share, due], i) => rows.push({
@@ -241,6 +243,9 @@ export async function load(cycleIn?: string) {
   ]);
   for (const r of [cycleRows, openIncome, ledger]) if (r.error) throw r.error;
   const ser = (e: any) => { const n = normEntry(e); return { ...n, ...convert(n, fx.rate) }; };
+  // проекты из архива: их ожидаемые оплаты и условия больше не показываем (история прошлых циклов остаётся)
+  const archivedIds = new Set(projects.filter((p) => p.archived).map((p) => p.id));
+  const live = (e: any) => e.project_id == null || !archivedIds.has(e.project_id);
 
   // баланс по каждому человеку в родной валюте: сумма к выплате минус уже выплаченное.
   // Отрицательный баланс = выдан аванс больше, чем начислено.
@@ -260,9 +265,9 @@ export async function load(cycleIn?: string) {
   return {
     cycle: c, current: currentCycle(), bounds: cycleBounds(c), rate: fx,
     projects: projects.map((p) => ({ id: p.id, name: p.name, archived: p.archived })),
-    people, rules: rls, terms: tms,
-    entries: ((cycleRows.data as any[]) ?? []).map(ser),
-    openIncome: ((openIncome.data as any[]) ?? []).map(ser),
+    people, rules: rls, terms: tms.filter(live),
+    entries: ((cycleRows.data as any[]) ?? []).filter((e) => live(e) || e.status !== "planned").map(ser),
+    openIncome: ((openIncome.data as any[]) ?? []).filter(live).map(ser),
     unassigned,
   };
 }

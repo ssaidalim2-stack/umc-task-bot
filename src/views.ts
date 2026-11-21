@@ -297,28 +297,32 @@ function ruDateTime(iso: string | null | undefined): string {
   return d.slice(8, 10) + "." + d.slice(5, 7) + " " + d.slice(11, 16);
 }
 
-async function teamTasksByPerson(): Promise<{ name: string; tasks: TeamTask[] }[]> {
+async function teamTasksByPerson(keep?: (telegramId: number) => boolean): Promise<{ id: number; name: string; tasks: TeamTask[] }[]> {
   const [tasks, members] = await Promise.all([d2.allTasksBulk(), (await import("./db")).listMembers()]);
   const nameById = new Map(members.map((m) => [m.telegram_id, m.name || m.username || String(m.telegram_id)]));
-  const groups = new Map<string, TeamTask[]>();
+  const groups = new Map<number, TeamTask[]>();
   for (const t of tasks as any[]) {
-    const name = t.assignee_id ? nameById.get(t.assignee_id) || t.assignee_name || "Без исполнителя" : t.assignee_name || "Без исполнителя";
-    const arr = groups.get(name) || [];
+    // исполнитель — только человек из бота: по id или по имени; задачи «без исполнителя» в сводку не идут
+    const id: number | undefined = t.assignee_id || (t.assignee_name ? d2.resolveMemberSync(members, t.assignee_name)?.telegram_id : undefined);
+    if (!id || !nameById.has(id) || (keep && !keep(id))) continue;
+    const arr = groups.get(id) || [];
     arr.push(t as TeamTask);
-    groups.set(name, arr);
+    groups.set(id, arr);
   }
-  return [...groups.entries()].map(([name, tasks]) => ({ name, tasks })).sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  return [...groups.entries()].map(([id, tasks]) => ({ id, name: nameById.get(id)!, tasks })).sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
+// «в работе» — только новые и начатые; сданные на проверку уже не задача исполнителя
+const isWorking = (t: TeamTask) => t.status === "new" || t.status === "in_progress";
 
 // Утро: что у кого в работе на сегодня и что уже горит
-export async function buildTeamMorning(): Promise<string> {
+export async function buildTeamMorning(keep?: (telegramId: number) => boolean): Promise<string> {
   const now = Date.now();
   const today = new Date(now + 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const people = await teamTasksByPerson();
+  const people = await teamTasksByPerson(keep);
   const L = [`☀️ *Задачи на сегодня — ${today.split("-").reverse().join(".")}*`, ""];
   let any = false;
   for (const p of people) {
-    const open = p.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled");
+    const open = p.tasks.filter(isWorking);
     if (!open.length) continue;
     any = true;
     const overdue = open.filter((t) => t.deadline && new Date(t.deadline).getTime() < now);
@@ -333,17 +337,17 @@ export async function buildTeamMorning(): Promise<string> {
 }
 
 // Вечер: итоги дня по каждому — что закрыто, что закрыто с опозданием, что просрочено, что ещё в работе
-export async function buildTeamEvening(): Promise<string> {
+export async function buildTeamEvening(keep?: (telegramId: number) => boolean): Promise<string> {
   const now = Date.now();
   const todayIso = new Date(now + 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const people = await teamTasksByPerson();
+  const people = await teamTasksByPerson(keep);
   const L = [`🌙 *Итоги дня — ${todayIso.split("-").reverse().join(".")}*`, ""];
   let any = false;
   for (const p of people) {
     const doneToday = p.tasks.filter((t) => t.status === "done" && t.updated_at && new Date(new Date(t.updated_at).getTime() + 5 * 3600 * 1000).toISOString().slice(0, 10) === todayIso);
     const onTime = doneToday.filter((t) => !t.deadline || new Date(t.updated_at!).getTime() <= new Date(t.deadline).getTime());
     const late = doneToday.filter((t) => t.deadline && new Date(t.updated_at!).getTime() > new Date(t.deadline).getTime());
-    const open = p.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled");
+    const open = p.tasks.filter(isWorking);
     const overdue = open.filter((t) => t.deadline && new Date(t.deadline).getTime() < now);
     const active = open.filter((t) => !overdue.includes(t));
     if (!doneToday.length && !open.length) continue;

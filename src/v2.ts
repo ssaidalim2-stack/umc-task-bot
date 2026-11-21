@@ -320,7 +320,7 @@ export function registerV2(bot: Bot) {
 // уведомление ответственных за этап + постинг в привязанные группы
 async function notifyStage(bot: Bot, projectId: number, idx: number, stage: string) {
   const proj = await d2.getProject(projectId);
-  const roles = STAGE_OWNER_ROLES[stage] || [];
+  const roles = (STAGE_OWNER_ROLES[stage] || []).filter((r) => r !== "admin"); // админам по каждому видео не пишем
   const msg = `🎬 ${proj?.name} — Видео #${idx}\nЭтап: ${STAGE_LABEL[stage]}\nТвой шаг — приступай.`;
   const notified = new Set<number>();
   for (const role of roles) {
