@@ -801,6 +801,11 @@ function hideSplash(){ const sp=document.getElementById('splash'); if(sp) sp.cla
 // поверх других программ и не даёт менять размер окна — там обычное окно, его можно тянуть
 const IS_MOBILE_TG = ['ios','android','android_x'].includes(tg.platform);
 try{ if(IS_MOBILE_TG && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
+// на ПК полный экран мог остаться с прошлых версий (или его включили в настройках бота) — выходим из него
+// сразу и каждый раз, когда Telegram снова его включит, чтобы окно можно было свернуть и тянуть
+function leaveDesktopFullscreen(){ try{ if(!IS_MOBILE_TG && tg.isFullscreen && tg.exitFullscreen) tg.exitFullscreen(); }catch(e){} }
+leaveDesktopFullscreen();
+try{ tg.onEvent && tg.onEvent('fullscreenChanged', leaveDesktopFullscreen); }catch(e){}
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
