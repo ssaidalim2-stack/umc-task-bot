@@ -141,7 +141,7 @@ async function clientPaymentReminders(today: string): Promise<number> {
   const due = await fin.dueClientPayments(today);
   if (!due.length) return 0;
   const fmt = (n: number, c: string) => (c === "USD" ? "$" : "") + Math.round(n).toLocaleString("ru-RU") + (c === "USD" ? "" : " сум");
-  const lines = due.map((d) => `• ${d.project}: ${fmt(d.amount, d.currency)} — ${d.overdue ? "⚠️ просрочено с " + d.due_on.split("-").reverse().join(".") : "сегодня"}`);
+  const lines = due.map((d) => `• ${d.project}: ${fmt(d.amount, d.currency)}${d.count > 1 ? ` (${d.count} платежа)` : ""} — ${d.overdue ? "⚠️ не оплачено с " + d.due_on.split("-").reverse().join(".") : "сегодня"}`);
   const text = `💰 Ожидаются оплаты от клиентов:\n\n${lines.join("\n")}\n\nОтметить получение: приложение → Финансы → Доходы.`;
   const ids = new Set<number>(ENV_ADMINS);
   (await db.listAdmins()).forEach((a) => ids.add(a.telegram_id));

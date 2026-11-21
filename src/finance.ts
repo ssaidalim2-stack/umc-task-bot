@@ -452,10 +452,24 @@ export async function subscriptionExpense(sub: { id: number; app: string; price?
 }
 
 // для крона: ожидаемые оплаты клиентов, срок которых наступил
-export async function dueClientPayments(today: string): Promise<{ project: string; amount: number; currency: string; due_on: string; overdue: boolean }[]> {
+// Ожидаемые оплаты, срок которых наступил: одна строка на проект и валюту (сумма, сколько платежей,
+// с какой даты просрочено). Раньше каждый неоплаченный платёж за все месяцы шёл отдельной строкой.
+// Архивные проекты не напоминаем.
+export async function dueClientPayments(today: string): Promise<{ project: string; amount: number; currency: string; due_on: string; overdue: boolean; count: number }[]> {
   const { data, error } = await supabase.from("fin_entries").select("*").eq("kind", "income").eq("status", "planned").lte("due_on", today).order("due_on");
   if (error) return [];
-  const projects = await d2.getProjects();
-  const name = new Map(projects.map((p) => [p.id, p.name]));
-  return ((data as any[]) ?? []).map((e) => ({ project: (e.project_id && name.get(e.project_id)) || "Без проекта", amount: Number(e.amount), currency: e.currency, due_on: e.due_on, overdue: e.due_on < today }));
+  const projects = await d2.getProjectsWithMeta();
+  const live = new Map(projects.filter((p) => !p.archived).map((p) => [p.id, p.name]));
+  const groups = new Map<string, { project: string; amount: number; currency: string; due_on: string; overdue: boolean; count: number }>();
+  for (const e of (data as any[]) ?? []) {
+    if (e.project_id && !live.has(e.project_id)) continue;
+    const project = (e.project_id && live.get(e.project_id)) || "Без проекта";
+    const key = project + "|" + e.currency;
+    const g = groups.get(key) || { project, amount: 0, currency: e.currency, due_on: e.due_on, overdue: false, count: 0 };
+    g.amount += Number(e.amount); g.count++;
+    if (e.due_on < g.due_on) g.due_on = e.due_on;
+    g.overdue = g.overdue || e.due_on < today;
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((x, y) => x.due_on.localeCompare(y.due_on));
 }
