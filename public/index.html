@@ -751,7 +751,7 @@
   </g></symbol></svg>
 <div id="splash"></div>
 <header>
-  <div class="hrow"><h1 id="brand"></h1><button id="fsBtn" class="thbtn" title="Полный экран" style="display:none"></button><button id="themeBtn" class="thbtn" title="Тема оформления"></button></div>
+  <div class="hrow"><h1 id="brand"></h1><button id="themeBtn" class="thbtn" title="Тема оформления"></button></div>
   <div class="sub" id="period">загрузка…</div>
 </header>
 <div class="wrap" id="view"></div>
@@ -801,71 +801,17 @@ function hideSplash(){ const sp=document.getElementById('splash'); if(sp) sp.cla
 // поверх других программ и не даёт менять размер окна — там обычное окно, его можно тянуть
 const IS_MOBILE_TG = ['ios','android','android_x'].includes(tg.platform);
 try{ if(IS_MOBILE_TG && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0') && tg.requestFullscreen) tg.requestFullscreen(); }catch(e){}
-// на ПК полный экран — по выбору человека: кнопка ⛶ в шапке включает и выключает его, выбор
-// запоминается на этом компьютере. По умолчанию обычное окно (его можно свернуть и тянуть).
-const FS_KEY='umc_desktop_fullscreen';
-const FS_LOG=[];
-function fsLog(m){ const d=new Date(); FS_LOG.push(d.toTimeString().slice(0,8)+' '+m+' fs='+tg.isFullscreen+' act='+tg.isActive); if(FS_LOG.length>40) FS_LOG.shift(); }
-function fsWanted(){ try{ return localStorage.getItem(FS_KEY)==='1'; }catch(e){ return false; } }
-function paintFsBtn(){ const b=document.getElementById('fsBtn'); if(b) b.textContent=tg.isFullscreen?'🗗':'⛶'; }
-function toggleDesktopFullscreen(){
-  const on=!tg.isFullscreen;
-  try{ localStorage.setItem(FS_KEY,on?'1':'0'); }catch(e){}
-  try{ on ? tg.requestFullscreen() : tg.exitFullscreen(); }catch(e){}
+// На ПК (Windows/macOS) полный экран Telegram не используем совсем: у Telegram Desktop это окно
+// остаётся поверх панели задач, и при переключении на другую программу (Alt+Tab) нижняя полоса бота
+// висит поверх неё. Telegram при этом не сообщает странице, что окно ушло на задний план, поэтому
+// обойти это из кода нельзя (проверено записями экрана). Если полный экран всё же включился
+// (из меню Telegram или по настройке бота) — сразу выходим.
+function leaveDesktopFullscreen(){ try{ if(!IS_MOBILE_TG && tg.isFullscreen && tg.exitFullscreen) tg.exitFullscreen(); }catch(e){} }
+if(!IS_MOBILE_TG){
+  try{ localStorage.removeItem('umc_desktop_fullscreen'); }catch(e){}
+  leaveDesktopFullscreen();
+  try{ tg.onEvent('fullscreenChanged', leaveDesktopFullscreen); }catch(e){}
 }
-if(!IS_MOBILE_TG && tg.requestFullscreen && tg.exitFullscreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')){
-  try{ if(fsWanted() && !tg.isFullscreen) tg.requestFullscreen(); else if(!fsWanted() && tg.isFullscreen) tg.exitFullscreen(); }catch(e){}
-  const b=document.getElementById('fsBtn'); if(b){ b.style.display=''; b.onclick=toggleDesktopFullscreen; }
-  paintFsBtn();
-  try{ tg.onEvent('fullscreenChanged', paintFsBtn); }catch(e){}
-  // Полноэкранное окно Telegram Desktop остаётся поверх панели задач Windows: переключился в другую
-  // программу — а нижняя полоса бота торчит поверх неё. Поэтому, пока окно бота не в фокусе,
-  // выходим из полного экрана, а когда вернулся — включаем снова (если ты его выбирал).
-  // Свои всплывающие окна Telegram (alert/confirm) тоже снимают фокус — их не считаем.
-  let FS_SUSPENDED=false, POPUP_OPEN=0, FS_BLUR_T=null;
-  ['showAlert','showConfirm','showPopup'].forEach(fn=>{
-    const orig=tg[fn]; if(typeof orig!=='function') return;
-    tg[fn]=function(...args){
-      POPUP_OPEN++;
-      const done=()=>{ POPUP_OPEN=Math.max(0,POPUP_OPEN-1); };
-      const cbi=args.findIndex(a=>typeof a==='function');
-      if(cbi>=0){ const cb=args[cbi]; args[cbi]=(...r)=>{ done(); return cb(...r); }; } else args.push(()=>done());
-      try{ return orig.apply(tg,args); }catch(e){ done(); throw e; }
-    };
-  });
-  // Уход из окна ловим тремя способами: события Telegram (activated/deactivated, Bot API 8.0),
-  // потеря фокуса окна и скрытие страницы — Telegram Desktop шлёт не всё из этого.
-  const fsSuspend=(why)=>{
-    fsLog('suspend:'+why);
-    if(POPUP_OPEN) return;
-    if(!(tg.isFullscreen || fsWanted())) return;
-    FS_SUSPENDED=true; try{ tg.exitFullscreen(); }catch(e){ fsLog('exit err '+e); }
-  };
-  const fsResume=(why)=>{
-    fsLog('resume:'+why);
-    clearTimeout(FS_BLUR_T);
-    if(FS_SUSPENDED && fsWanted() && !tg.isFullscreen){ try{ tg.requestFullscreen(); }catch(e){ fsLog('req err '+e); } }
-    FS_SUSPENDED=false;
-  };
-  // Возвращаем полный экран ТОЛЬКО когда окно бота реально получило фокус. Сигналы Telegram «activated»
-  // и «страница видна» приходят и когда ты уже в другой программе — от них полный экран включался обратно
-  // и полоса снова торчала поверх (видно на записи экрана). Их используем только для выхода.
-  try{ tg.onEvent('deactivated', ()=>fsSuspend('tg')); tg.onEvent('activated', ()=>fsLog('activated (ignored)')); }catch(e){}
-  window.addEventListener('blur',()=>{ clearTimeout(FS_BLUR_T); FS_BLUR_T=setTimeout(()=>{ if(!document.hasFocus()) fsSuspend('blur'); },300); });
-  window.addEventListener('focus',()=>{ setTimeout(()=>{ if(document.hasFocus()) fsResume('focus'); else fsLog('focus w/o hasFocus'); },150); });
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden) fsSuspend('hidden'); else fsLog('visible (ignored)'); });
-  try{ tg.onEvent('fullscreenChanged', ()=>fsLog('fullscreenChanged')); tg.onEvent('fullscreenFailed', (e)=>fsLog('fullscreenFailed '+JSON.stringify(e||{}))); }catch(e){}
-}
-// Диагностика полного экрана: 5 быстрых нажатий на логотип — панель с журналом событий.
-// Нужна, чтобы увидеть, какие сигналы Telegram Desktop на самом деле присылает.
-const FS_BUILD='fs4';
-function fsShowLog(){
-  const el=document.createElement('div');
-  el.style.cssText='position:fixed;inset:10% 5%;z-index:99999;background:#111;color:#0f0;font:12px/1.4 monospace;padding:12px;overflow:auto;border-radius:10px;white-space:pre-wrap';
-  el.textContent=['build '+FS_BUILD,'platform '+tg.platform+' · version '+tg.version,'isFullscreen '+tg.isFullscreen+' · isActive '+tg.isActive+' · wanted '+fsWanted(),'',...FS_LOG].join('\n')+'\n\n(нажми, чтобы закрыть)';
-  el.onclick=()=>el.remove(); document.body.appendChild(el);
-}
-(function(){ let n=0,t=0; document.addEventListener('click',e=>{ if(!e.target.closest||!e.target.closest('#brand')) return; const now=Date.now(); n=(now-t<600)?n+1:1; t=now; if(n>=5){ n=0; fsShowLog(); } }); })();
 try{ tg.disableVerticalSwipes && tg.disableVerticalSwipes(); }catch(e){}
 const INIT = tg.initData || "";
 let DATA=null, TAB=null, PROJ=null, WORK_EMP=0, TZ_SEC="video", TZ_PROJ="", TZ_EXEC=null, TZ_ITEM=null, TZ_ITEMS=null, TZ_ITEMS_FOR=null, TZ_PHOTO=null;
