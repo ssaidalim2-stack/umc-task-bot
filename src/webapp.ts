@@ -56,6 +56,19 @@ export async function rejectMember(id: number): Promise<void> {
 }
 export const PENDING_TEXT ="⏳ Заявка отправлена админу. Как только он одобрит, бот откроется.";
 
+// ---------- названия периодов ----------
+// Новый период — тот, в который попадёт день через неделю: так кнопка, нажатая в конце периода,
+// создаёт следующий, а нажатая в начале — текущий.
+const MONTHS_RU = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+export function nextPeriodName(cycle: "month" | "mid", now = Date.now()): string {
+  const d = new Date(now + 5 * 3600 * 1000 + 7 * 86400000);
+  let y = d.getUTCFullYear(), m = d.getUTCMonth();
+  if (cycle === "month") return `${MONTHS_RU[m]} ${y}`;
+  if (d.getUTCDate() < 15) { m -= 1; if (m < 0) { m = 11; y -= 1; } } // 15.m – 15.(m+1)
+  const m2 = (m + 1) % 12, y2 = m === 11 ? y + 1 : y;
+  return y2 === y ? `${MONTHS_RU[m]}-${MONTHS_RU[m2]} ${y}` : `${MONTHS_RU[m]} ${y}-${MONTHS_RU[m2]} ${y2}`;
+}
+
 // ---------- роли и вкладки ----------
 export function roleOf(member: db.Member | null, isAdmin: boolean): string {
   if (isAdmin) return "admin";
@@ -472,13 +485,12 @@ export async function getData(userId: number, tgUser?: { first_name?: string; la
       }
       return { total: mine.length, done: done.length, open: mine.length - done.length, onTime, late };
     };
-    for (const roleKey of OPERATIONAL_ROLES) {
-      const mems = members.filter((m) => db.memberRoleList(m).includes(roleKey));
-      if (!mems.length) { team.push({ id: null, role: ROLE_LABEL_RU[roleKey], name: "— вакансия —", registered: false, tasks: [], stats: null }); continue; }
-      for (const m of mems) {
-        const tks = memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
-        team.push({ id: m.telegram_id, role: ROLE_LABEL_RU[roleKey], name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })), stats: statsFor(m.telegram_id) });
-      }
+    // один человек — одна карточка, даже если у него несколько рабочих ролей; пустых «вакансий» не показываем
+    for (const m of members) {
+      const roles = db.memberRoleList(m).filter((r) => OPERATIONAL_ROLES.includes(r));
+      if (!roles.length) continue;
+      const tks = memTasks(m).filter((x) => x.status === "new" || x.status === "in_progress" || x.status === "await_confirm");
+      team.push({ id: m.telegram_id, role: roles.map((r) => ROLE_LABEL_RU[r]).join(", "), name: m.name || m.username || String(m.telegram_id), registered: true, tasks: tks.map((x) => ({ id: x.id, title: x.title, status: x.status })), stats: statsFor(m.telegram_id) });
     }
     // админ должен всегда иметь возможность назначить задачу самому себе, независимо от рабочих ролей
     if (isAdmin && member && !team.some((t) => t.id === userId)) {
@@ -503,6 +515,7 @@ export async function getData(userId: number, tgUser?: { first_name?: string; la
     teamAll = members.map((m) => ({ id: m.telegram_id, pending: pendingBulk.has(m.telegram_id), name: m.name || "", username: m.username || "", isAdmin: isAdminId(m, m.telegram_id), role: isAdminId(m, m.telegram_id) ? "admin" : db.memberRole(m), roles: db.memberRoleList(m), tabs: customTabsBulk[m.telegram_id] || null, hasGroup: m.telegram_id in groupsBulk, projectIds: projectsBulk[m.telegram_id] || [] }));
   }
   const projectsAll = isAdmin ? await d2.getProjectsWithMeta() : [];
+  const nextPeriods = { month: nextPeriodName("month"), mid: nextPeriodName("mid") };
 
   const salesLeads = tabs.includes("sales") ? await serializeLeads() : [];
   const umcLeads = tabs.includes("umc") ? await serializeUmc() : [];
@@ -534,7 +547,7 @@ export async function getData(userId: number, tgUser?: { first_name?: string; la
 
   return {
     user: { id: userId, name: member?.name || "", role, roles: memberRoles, is_admin: isAdmin },
-    period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL,
+    period, tabs, stages: VIDEO_STAGES, stageLabels: STAGE_LABEL, nextPeriods,
     projects: projOut,
     myTasks: myTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, deadline: t.deadline })),
     confirmable, team, teamAll, assignable, specialists, projectsAll, myWork, board, teamTasks, stats, daily, meta: metaOut, salesLeads, umcLeads,
@@ -592,7 +605,6 @@ export async function doAction(userId: number, action: any) {
       }
       await d2.updateItem(item.id, { stage: nx, status: nx === "published" ? "done" : "in_progress" });
       await fin.onItemStage(item, item.stage, nx);
-      if (nx === "shoot") await autoCloseTasksForStage(item.id, "shoot");
       await notifyStage(item.project_id, item.idx, nx);
       break;
     }
@@ -1010,7 +1022,6 @@ export async function doAction(userId: number, action: any) {
       else if (item0 && item0.type === "video" && item0.stage === "idea" && scriptTxt.trim()) patch.stage = "script"; // сценарий заполнен → авто-переход в готовый формат
       await d2.updateItem(+action.id, patch);
       if (item0) await fin.onItemStage({ ...item0, type: patch.type || item0.type }, item0.stage, patch.stage);
-      if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       if (item0 && (data.deadline !== (prevData0.deadline || "") || patch.type)) await resortPlan(item0.plan_id);
       return { items: (await d2.listItemsByPlan(+action.planId)).map(serializeItem) };
     }
@@ -1032,7 +1043,6 @@ export async function doAction(userId: number, action: any) {
       else if (it.type === "video" && it.stage === "idea" && "script" in p && String(p.script || "").trim()) patch.stage = "script";
       await d2.updateItem(+action.id, patch);
       await fin.onItemStage({ ...it, type: patch.type || it.type }, it.stage, patch.stage);
-      if (patch.stage === "shoot") await autoCloseTasksForStage(+action.id, "shoot");
       if ("deadline" in p || p.type) await resortPlan(it.plan_id);
       return { items: (await d2.listItemsByPlan(planId)).map(serializeItem) };
     }
@@ -1317,6 +1327,44 @@ export async function doAction(userId: number, action: any) {
       }
       break;
     }
+    // ---- периоды сразу для всех проектов: каждый по своему циклу (1–30 или 15–15) ----
+    case "project_set_cycle": {
+      if (!isAdmin) return { error: "нет доступа" };
+      await d2.setProjectCycle(+action.id, action.cycle === "month" ? "month" : "mid");
+      return getData(userId);
+    }
+    case "plans_new_all": {
+      if (!isMgr) return { error: "нет доступа" };
+      const projects = await d2.getProjectsWithMeta();
+      const plans = await d2.getAllPlans();
+      const allItems = await d2.getAllItems();
+      const done: string[] = [];
+      for (const p of projects.filter((x) => !x.archived)) {
+        const period = nextPeriodName(p.cycle === "month" ? "month" : "mid");
+        const mine = plans.filter((pl) => pl.project_id === p.id);
+        const existing = mine.find((pl) => pl.period.trim().toLowerCase() === period.toLowerCase());
+        if (existing) {
+          if (!existing.is_active) await d2.setPlanActive(p.id, existing.id);
+          done.push(`${p.name}: «${period}» уже был — сделал активным`);
+          continue;
+        }
+        // столько же видео и графики, сколько в текущем периоде проекта (пустые строки)
+        const cur = mine.find((pl) => pl.is_active) || mine[mine.length - 1];
+        const curItems = cur ? allItems.filter((it) => it.plan_id === cur.id) : [];
+        const v = curItems.filter((it) => it.type === "video").length;
+        const g = curItems.filter((it) => it.type === "graphic").length;
+        const planId = await d2.createPlan(p.id, period);
+        if (!planId) { done.push(`${p.name}: не удалось создать`); continue; }
+        const specs: { type: string; idx: number }[] = [];
+        let idx = 1;
+        for (let i = 0; i < v; i++) specs.push({ type: "video", idx: idx++ });
+        for (let i = 0; i < g; i++) specs.push({ type: "graphic", idx: idx++ });
+        if (specs.length) await d2.addContentItems(planId, p.id, specs);
+        await d2.setPlanActive(p.id, planId);
+        done.push(`${p.name}: «${period}» — ${v} видео, ${g} графики`);
+      }
+      return { ...(await getData(userId)), plansNewAll: done };
+    }
     case "plan_set_active": {
       if (!isMgr) break;
       await d2.setPlanActive(+action.projectId, +action.planId);
@@ -1335,7 +1383,8 @@ async function notifyStage(projectId: number, idx: number, stage: string) {
   const proj = await d2.getProject(projectId);
   const msg = `🎬 ${proj?.name} — Видео #${idx}\nЭтап: ${STAGE_LABEL[stage]}\nТвой шаг — приступай.`;
   const notified = new Set<number>();
-  for (const role of STAGE_OWNER_ROLES[stage] || []) {
+  // админам «твой шаг» по каждому видео не шлём — это засоряло личку; этап видят менеджеры и исполнители
+  for (const role of (STAGE_OWNER_ROLES[stage] || []).filter((r) => r !== "admin")) {
     for (const m of await d2.membersWithRole(role)) {
       if (notified.has(m.telegram_id)) continue;
       notified.add(m.telegram_id);
@@ -1345,15 +1394,7 @@ async function notifyStage(projectId: number, idx: number, stage: string) {
   for (const b of await d2.bindingsFor(projectId, stage)) { try { await bot.api.sendMessage(b.chat_id, msg); } catch {} }
 }
 
-// закрыть задачи, привязанные к пункту плана, когда он дошёл до нужного этапа (напр. видео отмечено «Снято»)
-async function autoCloseTasksForStage(itemId: number, stage: string) {
-  if (stage !== "shoot") return; // пока только съёмочные ТЗ авто-закрываются по факту съёмки
-  const tasks = await d2.openTasksForItem(itemId);
-  for (const t of tasks) {
-    await d2.setTaskStatus(t.id, "done", { confirmed_by: 0 });
-    if (t.assignee_id) { try { await bot.api.sendMessage(t.assignee_id, `✅ Задача «${t.title}» закрыта автоматически — видео отмечено как «Снято».`); } catch {} }
-  }
-}
+// задачи пункта закрываются сами в d2.updateItem → syncItemTasks (по этапу, без сообщений исполнителю)
 
 // перевести пункт в «Опубликовано» (подтверждение публикации) + сдельные начисления за пропущенные этапы
 async function publishItem(itemId: number) {

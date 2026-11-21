@@ -19,7 +19,8 @@ export async function getProject(id: number): Promise<Project | null> {
 
 // ---------- метаданные проекта (описание, архив) — без ALTER TABLE, в app_settings как и всё остальное ----------
 // brief — бриф для утренних AI-идей: ниша, аудитория, гео, язык контента, тон, чего не предлагать
-export interface ProjectMeta { description: string; archived: boolean; brief?: Record<string, string>; }
+// cycle — как идут периоды контент-плана: "month" — с 1 по 30/31 число, "mid" — с 15 по 15
+export interface ProjectMeta { description: string; archived: boolean; brief?: Record<string, string>; cycle?: "month" | "mid"; }
 async function projectMetaRaw(id: number): Promise<ProjectMeta> {
   try { const raw = await getSetting(`project_meta:${id}`); return raw ? { description: "", archived: false, ...JSON.parse(raw) } : { description: "", archived: false }; }
   catch { return { description: "", archived: false }; }
@@ -35,6 +36,11 @@ export async function getActiveProjects(): Promise<Project[]> {
 export async function setProjectArchived(id: number, archived: boolean): Promise<void> {
   const meta = await projectMetaRaw(id);
   meta.archived = archived;
+  await setSetting(`project_meta:${id}`, JSON.stringify(meta));
+}
+export async function setProjectCycle(id: number, cycle: "month" | "mid"): Promise<void> {
+  const meta = await projectMetaRaw(id);
+  meta.cycle = cycle;
   await setSetting(`project_meta:${id}`, JSON.stringify(meta));
 }
 export async function setProjectBrief(id: number, brief: Record<string, string>): Promise<void> {
@@ -143,6 +149,48 @@ export async function getItem(id: number): Promise<ContentItem | null> {
 }
 export async function updateItem(id: number, patch: Partial<ContentItem>): Promise<void> {
   await supabase.from("content_items").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+  if (patch.stage) await syncItemTasks(id, patch.stage);
+}
+
+// ---------- задачи по пункту плана закрываются сами, когда пункт прошёл их этап ----------
+// Иначе ТЗ на монтаж уже опубликованного видео годами висят «в работе» и сыплются в сводки.
+// ТЗ на съёмку — когда видео «Снято», на монтаж и публикацию — когда «Опубликовано», дизайн — когда графика готова.
+const ITEM_STAGE_ORDER = ["idea", "script", "shoot", "edit", "published"];
+function closingStageFor(title: string): string | null {
+  const t = (title || "").trim();
+  if (/^ТЗ\s*•\s*Видео/i.test(t)) return "shoot";
+  if (/^ТЗ\s*•\s*Монтаж/i.test(t)) return "published";
+  if (/^ТЗ\s*•\s*Дизайн/i.test(t)) return "done";
+  if (/^Публикация:/i.test(t)) return "published";
+  return null;
+}
+function stageReached(stage: string, target: string): boolean {
+  if (target === "done") return stage === "done";
+  const a = ITEM_STAGE_ORDER.indexOf(stage), b = ITEM_STAGE_ORDER.indexOf(target);
+  return a >= 0 && b >= 0 && a >= b;
+}
+export async function syncItemTasks(itemId: number, stage: string): Promise<number> {
+  const { data } = await supabase.from("tasks").select("id,title").eq("item_id", itemId).not("status", "in", "(done,cancelled)");
+  let n = 0;
+  for (const t of (data as { id: number; title: string }[]) ?? []) {
+    const target = closingStageFor(t.title);
+    if (target && stageReached(stage, target)) { await setTaskStatus(t.id, "done", { confirmed_by: 0 } as any); n++; }
+  }
+  return n;
+}
+// разовая/ежедневная уборка: закрыть все открытые задачи, чей пункт уже прошёл их этап
+export async function closeStaleItemTasks(): Promise<number> {
+  const { data } = await supabase.from("tasks").select("id,title,item_id").not("item_id", "is", null).not("status", "in", "(done,cancelled)");
+  const rows = (data as { id: number; title: string; item_id: number }[]) ?? [];
+  if (!rows.length) return 0;
+  const { data: its } = await supabase.from("content_items").select("id,stage").in("id", [...new Set(rows.map((r) => r.item_id))]);
+  const stageById = new Map(((its as { id: number; stage: string }[]) ?? []).map((i) => [i.id, i.stage]));
+  let n = 0;
+  for (const r of rows) {
+    const target = closingStageFor(r.title), stage = stageById.get(r.item_id);
+    if (target && stage && stageReached(stage, target)) { await setTaskStatus(r.id, "done", { confirmed_by: 0 } as any); n++; }
+  }
+  return n;
 }
 // сводка плана: видео по этапам, графика готово/всего
 export async function planSummary(projectId: number): Promise<{ video: Record<string, number>; videoTotal: number; graphicDone: number; graphicTotal: number }> {

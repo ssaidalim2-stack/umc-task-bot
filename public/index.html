@@ -2147,12 +2147,23 @@ function renderProjects(){
   const row=p=>`<div class="vid" style="align-items:flex-start">
       <div style="flex:1;min-width:0">
         <div><b>${esc(p.name)}</b> <span class="muted" style="font-size:12px">(${esc(p.key)})</span></div>
+        ${p.archived?'':`<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px"><span class="muted">Период:</span>
+          <select data-projcycle="${p.id}" style="width:auto;padding:4px 8px;font-size:12px">
+            <option value="mid" ${p.cycle!=='month'?'selected':''}>с 15 по 15</option>
+            <option value="month" ${p.cycle==='month'?'selected':''}>с 1 по 30</option>
+          </select></div>`}
         <textarea data-projdesc="${p.id}" style="min-height:44px;margin-top:4px;font-size:13px" placeholder="Описание проекта — чем занимается, кто клиент...">${esc(p.description||'')}</textarea>
       </div>
       ${p.archived?'':`<button class="xbtn" data-briefopen="${p.id}" title="Бриф для AI-идей">🧠${p.brief&&p.brief.niche?' ✓':''}</button>`}
       <button class="xbtn" data-projtoggle="${p.id}:${p.archived?0:1}" title="${p.archived?'Восстановить из архива':'В архив'}">${p.archived?'↩️':'🗄'}</button>
     </div>${PROJ_BRIEF_OPEN===p.id?renderBrief(p):''}`;
-  let h=`<div class="card"><h3>🗂 Проекты</h3>
+  const np=DATA.nextPeriods||{};
+  const preview=active.map(p=>`<div class="muted" style="font-size:12px">• ${esc(p.name)} → <b>${esc(p.cycle==='month'?np.month:np.mid)}</b></div>`).join('');
+  let h=`<div class="card"><h3>📅 Новый период для всех проектов</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Один клик — у каждого активного проекта появится новый период по его циклу (выбирается ниже у проекта) и станет активным. Видео и графики — столько же, сколько в текущем периоде, строки пустые. Если такой период уже есть, он просто станет активным.</div>
+    ${preview||'<div class="muted">Нет активных проектов</div>'}
+    <button class="btn full" data-plans-new-all style="margin-top:8px">Создать и включить</button></div>`;
+  h+=`<div class="card"><h3>🗂 Проекты</h3>
     ${active.length?active.map(row).join(''):'<div class="muted">Нет активных проектов</div>'}
     <div class="muted" style="font-size:11px;margin-top:8px">🧠 — бриф для утренних идей. Идеи приходят менеджерам по их проектам (кнопка 📁 в «Команде») каждый день, кроме воскресенья, с 9:00 вместе с задачами на день.</div></div>`;
   h+=`<div class="card"><h3>➕ Новый проект</h3>
@@ -3283,6 +3294,11 @@ function bind(){
   document.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_SEC=b.dataset.sec;TZ_EXEC=null;render();});
   document.querySelectorAll('[data-exec]').forEach(b=>b.onclick=()=>{captureTZ();TZ_EXEC=+b.dataset.exec;render();});
   document.querySelectorAll('[data-tzitem]').forEach(b=>b.onclick=()=>{captureTZ();TZ_ITEM=b.dataset.tzitem?+b.dataset.tzitem:null;render();});
+  document.querySelectorAll('[data-projcycle]').forEach(sel=>sel.onchange=()=>act({type:'project_set_cycle',id:+sel.dataset.projcycle,cycle:sel.value}));
+  { const b=document.querySelector('[data-plans-new-all]'); if(b) b.onclick=()=>{
+    const run=async()=>{ const res=await api('POST',{type:'plans_new_all'}); if(res&&res.error){tg.showAlert&&tg.showAlert(res.error);return;}
+      if(res&&res.projects){DATA=res;} TBL_PLAN=null;TBL_LOADED=null; render(); tg.showAlert&&tg.showAlert((res.plansNewAll||[]).join(String.fromCharCode(10))||'Готово'); };
+    if(tg.showConfirm) tg.showConfirm('Создать новый период для всех активных проектов и сделать его активным?',ok=>{if(ok)run();}); else run(); }; }
   document.querySelectorAll('[data-teamapprove]').forEach(b=>b.onclick=()=>act({type:'team_approve',id:+b.dataset.teamapprove}));
   document.querySelectorAll('[data-teamdel]').forEach(b=>b.onclick=()=>{const id=+b.dataset.teamdel;const del=()=>act({type:'team_delete',id});if(tg.showConfirm){tg.showConfirm('Удалить участника из команды?',(ok)=>{if(ok)del();});}else del();});
   document.querySelectorAll('[data-groupunbind]').forEach(b=>b.onclick=()=>{
