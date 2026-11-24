@@ -7,6 +7,7 @@ import { metaConfigured, pullSnapshot, tokenCheck } from "./meta";
 import { parseShootDay, parseItemData } from "./webapp";
 import * as fin from "./finance";
 import * as ideas from "./ideas";
+import * as research from "./research";
 
 const DEFAULT_LANG = (process.env.DEFAULT_LANG as Lang) || "ru";
 const ENV_ADMINS: number[] = (process.env.ADMIN_IDS || "").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
@@ -82,6 +83,10 @@ export async function runReminders(): Promise<{ checked: number; sent: number }>
   }
 
   // (связь с Google-таблицами отключена — контент-план ведётся в самом боте)
+
+  // исследование соцсетей (ScrapeCreators): раз в неделю на проект, ночью — до утренних идей и не в одном
+  // заходе с ними, чтобы уложиться в лимит времени функции
+  if (hour < 6) { try { await research.runWeeklyTick(); } catch (e) { console.error("research tick", e); } }
 
   // утренние AI-идеи по проектам менеджеров (с задачами на день вместо 8-часового дайджеста)
   try { sent += await ideas.runIdeasTick(bot.api, now, async (m) => (await d2.tasksForMember(m)).filter((x) => x.status === "new" || x.status === "in_progress").map((x) => x.title)); }

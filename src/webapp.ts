@@ -8,6 +8,7 @@ import * as meta from "./meta";
 import { aiConfigured, generateTz, aiCheck } from "./ai";
 import * as fin from "./finance";
 import * as ideas from "./ideas";
+import * as research from "./research";
 
 // ---------- проверка подписи Telegram WebApp ----------
 export function validateInitData(initData: string): { ok: boolean; user?: any } {
@@ -846,6 +847,39 @@ export async function doAction(userId: number, action: any) {
       for (const [k] of ideas.BRIEF_FIELDS) brief[k] = String(f[k] || "").trim().slice(0, 600);
       await d2.setProjectBrief(+action.id, brief);
       return getData(userId);
+    }
+    // ---- исследование соцсетей (ScrapeCreators): конкуренты, тренды, реклама ----
+    case "research_status": {
+      if (!isPlanner) return { error: "нет доступа" };
+      const configured = await research.researchConfigured();
+      let credits: number | null = null, error: string | undefined;
+      if (configured && isAdmin) { try { credits = await research.balance(); } catch (e: any) { error = String(e?.message || e); } }
+      return { research: { configured, credits, error, last: await research.lastKnownCredits() } };
+    }
+    case "research_set_key": {
+      if (!isAdmin) return { error: "нет доступа" };
+      const st = await research.setKey(String(action.key || ""));
+      return st.ok ? { research: { configured: true, credits: st.credits } } : { error: st.error };
+    }
+    case "research_get": {
+      if (!isPlanner) return { error: "нет доступа" };
+      const pid = +action.id;
+      const proj = (await d2.getProjectsWithMeta()).find((p) => p.id === pid);
+      return { researchData: { projectId: pid, data: await research.getResearch(pid), ads: await research.getAds(pid), cost: research.estimateCredits(proj?.brief), configured: await research.researchConfigured() } };
+    }
+    case "research_run": {
+      if (!isPlanner) return { error: "нет доступа" };
+      const pid = +action.id;
+      try { await research.runResearch(pid); }
+      catch (e: any) { return { error: String(e?.message || e) }; }
+      return { researchData: { projectId: pid, data: await research.getResearch(pid), ads: await research.getAds(pid), configured: true } };
+    }
+    case "research_ads": {
+      if (!isPlanner) return { error: "нет доступа" };
+      const pid = +action.id;
+      try { await research.adsTeardown(pid); }
+      catch (e: any) { return { error: String(e?.message || e) }; }
+      return { researchData: { projectId: pid, data: await research.getResearch(pid), ads: await research.getAds(pid), configured: true } };
     }
     // пробная генерация из приложения — в историю идей и в рассылку не попадает
     case "ideas_preview": {

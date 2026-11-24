@@ -2121,7 +2121,7 @@ function renderTeam(){
     <br><br>🔗 Личная группа: чтобы ТЗ и напоминания о дедлайнах дублировались человеку не только в личку, но и в его группу — добавь бота в эту группу и напиши там команду <code>/bindperson Имя</code> (или его telegram_id). Отвязать можно кнопкой 🔗✕ здесь.</div></div>`;
 }
 let PROJ_BRIEF_OPEN=null, PROJ_IDEAS={};
-const BRIEF_FIELDS_FRONT=[["niche","Ниша и продукт","напр. алюминиевые и ПВХ-рамы, окна, двери"],["audience","Целевая аудитория","кто покупает, чем живёт"],["geo","Город / регион","напр. Ташкент"],["lang","Язык контента","русский / узбекский / английский"],["tone","Тон бренда","напр. экспертный, без пафоса"],["avoid","Чего не предлагать","темы, форматы, конкуренты"]];
+const BRIEF_FIELDS_FRONT=[["niche","Ниша и продукт","напр. алюминиевые и ПВХ-рамы, окна, двери"],["audience","Целевая аудитория","кто покупает, чем живёт"],["geo","Город / регион","напр. Ташкент"],["lang","Язык контента","русский / узбекский / английский"],["tone","Тон бренда","напр. экспертный, без пафоса"],["avoid","Чего не предлагать","темы, форматы, конкуренты"],["competitors","Конкуренты (до 3)","@brand, tt:brand — Instagram по умолчанию"],["keywords","Ключевые слова для трендов (до 2)","напр. пластиковые окна, ремонт квартиры"]];
 function renderBrief(p){
   const b=p.brief||{};
   const pv=PROJ_IDEAS[p.id];
@@ -2133,7 +2133,47 @@ function renderBrief(p){
       <button class="btn xs sec" data-ideaspreview="${p.id}">🧪 Пример идей на сегодня</button>
     </div>
     ${pv?`<div class="muted" style="font-size:13px;white-space:pre-wrap;margin-top:10px;color:var(--text)">${esc(pv)}</div>`:''}
+    ${renderResearch(p)}
   </div>`;
+}
+// ---- исследование соцсетей (ScrapeCreators) ----
+let RS={}, RS_BUSY={}, RS_STATUS=null;
+const rsN=n=>n>=1e6?(n/1e6).toFixed(1).replace('.0','')+'M':n>=1e3?Math.round(n/1e3)+'K':String(n||0);
+function rsLoad(pid){ if(RS[pid]!==undefined) return; RS[pid]=null; api('POST',{type:'research_get',id:pid}).then(r=>{ RS[pid]=(r&&r.researchData)||{}; render(); }).catch(()=>{}); }
+function renderResearch(p){
+  rsLoad(p.id);
+  const st=RS[p.id];
+  if(st===null||st===undefined) return '<div class="muted" style="margin-top:12px">🔎 Загрузка исследования…</div>';
+  const d=st.data, ads=st.ads, busy=RS_BUSY[p.id];
+  let h='<div style="margin-top:14px;border-top:1px solid var(--line,#ddd);padding-top:10px"><b>🔎 Конкуренты и тренды</b>';
+  if(!st.configured) return h+'<div class="muted" style="font-size:12px;margin-top:4px">Нужен ключ ScrapeCreators — вставь его в карточке «🔎 Исследование соцсетей» выше.</div></div>';
+  h+=`<div class="muted" style="font-size:12px;margin:4px 0">Собирается само раз в неделю ночью и подмешивается в утренние идеи. Обновить сейчас ≈ ${st.cost||0} кредитов. ${d?'Последний сбор: '+new Date(d.at).toLocaleString('ru-RU'):'Ещё не собиралось.'}</div>`;
+  if(d){
+    if(d.outliers&&d.outliers.length){ h+='<div style="font-size:13px;margin-top:6px"><b>🚀 Залетело у конкурентов</b></div>'+d.outliers.map(o=>`<div style="font-size:13px;margin:4px 0">×${o.lift} · @${esc(o.handle)} · ${o.views?rsN(o.views)+' просм.':rsN(o.likes)+' лайков'}<br><span class="muted">${esc((o.caption||'').slice(0,140))}</span> <a href="${esc(o.url)}" target="_blank">открыть</a></div>`).join(''); }
+    else h+='<div class="muted" style="font-size:12px">У конкурентов за 2,5 месяца нет постов в 2+ раза выше их обычного уровня.</div>';
+    if(d.trends&&d.trends.length){ h+='<div style="font-size:13px;margin-top:8px"><b>🔥 Набирает по ключевым словам</b></div>'+d.trends.map(t=>`<div style="font-size:13px;margin:4px 0">${t.platform==='tt'?'TikTok':'Reels'} · ${t.views?rsN(t.views)+' просм.':rsN(t.likes)+' лайков'}<br><span class="muted">${esc((t.caption||'').slice(0,140))}</span> <a href="${esc(t.url)}" target="_blank">открыть</a></div>`).join(''); }
+    if(d.errors&&d.errors.length) h+='<div class="muted" style="font-size:12px;margin-top:6px">⚠️ '+d.errors.map(esc).join('<br>⚠️ ')+'</div>';
+  }
+  h+=`<div class="row" style="gap:6px;margin-top:8px;justify-content:flex-start;flex-wrap:wrap">
+    <button class="btn xs sec" data-rsrun="${p.id}" ${busy?'disabled':''}>${busy==='run'?'⏳ Собираю…':'🔄 Обновить сейчас'}</button>
+    <button class="btn xs sec" data-rsads="${p.id}" ${busy?'disabled':''}>${busy==='ads'?'⏳ Разбираю рекламу…':'📢 Реклама конкурентов'}</button></div>`;
+  if(ads){
+    h+=`<div style="font-size:13px;margin-top:10px"><b>📢 Реклама конкурентов в Meta</b> <span class="muted">(${new Date(ads.at).toLocaleDateString('ru-RU')}, активных: ${ads.ads.length})</span></div>`;
+    if(ads.text) h+=`<div style="font-size:13px;white-space:pre-wrap;margin-top:4px">${esc(ads.text)}</div>`;
+    if(ads.ads.length) h+='<details style="margin-top:6px"><summary class="muted" style="font-size:12px;cursor:pointer">Объявления</summary>'+ads.ads.map(a=>`<div style="font-size:12px;margin:6px 0"><b>${esc(a.page)}</b> · ${esc(a.format)} · с ${esc(a.since)}<br>${esc(a.title)}<br><span class="muted">${esc(a.body.slice(0,240))}</span>${a.cta?' · <b>'+esc(a.cta)+'</b>':''} <a href="${esc(a.url)}" target="_blank">открыть</a></div>`).join('')+'</details>';
+    if(ads.errors&&ads.errors.length) h+='<div class="muted" style="font-size:12px;margin-top:6px">⚠️ '+ads.errors.map(esc).join('<br>⚠️ ')+'</div>';
+  }
+  return h+'</div>';
+}
+function renderResearchKeyCard(){
+  if(!(DATA.user&&DATA.user.is_admin)) return '';
+  if(RS_STATUS===null){ RS_STATUS={loading:true}; api('POST',{type:'research_status'}).then(r=>{ RS_STATUS=(r&&r.research)||{error:(r&&r.error)||'нет ответа'}; render(); }).catch(()=>{ RS_STATUS={error:'нет связи'}; render(); }); }
+  const st=RS_STATUS||{};
+  const state=st.loading?'загрузка…':st.configured?('ключ подключён'+(st.credits!=null?' · осталось кредитов: <b>'+st.credits+'</b>':'')):'ключа нет';
+  return `<div class="card"><h3>🔎 Исследование соцсетей</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">ScrapeCreators: что залетело у конкурентов, тренды по ключевым словам, реклама конкурентов в Meta. Конкурентов и ключевые слова впиши в бриф проекта (🧠). 1 запрос ≈ 1 кредит; сбор по проекту — 1 кредит на конкурента и 2 на ключевое слово, раз в неделю.</div>
+    <div style="font-size:13px">Статус: ${state}${st.error?' · ⚠️ '+esc(st.error):''}</div>
+    <div class="row" style="gap:6px;margin-top:8px"><input id="rsKey" placeholder="API-ключ ScrapeCreators" style="flex:1"><button class="btn xs" data-rskey>Сохранить</button></div></div>`;
 }
 function renderProjects(){
   const all=DATA.projectsAll||[];
@@ -2154,7 +2194,7 @@ function renderProjects(){
     </div>${PROJ_BRIEF_OPEN===p.id?renderBrief(p):''}`;
   const np=DATA.nextPeriods||{};
   const preview=active.map(p=>`<div class="muted" style="font-size:12px">• ${esc(p.name)} → <b>${esc(p.cycle==='month'?np.month:np.mid)}</b></div>`).join('');
-  let h=`<div class="card"><h3>📅 Новый период для всех проектов</h3>
+  let h=renderResearchKeyCard()+`<div class="card"><h3>📅 Новый период для всех проектов</h3>
     <div class="muted" style="font-size:12px;margin-bottom:6px">Один клик — у каждого активного проекта появится новый период по его циклу (выбирается ниже у проекта) и станет активным. Видео и графики — столько же, сколько в текущем периоде, строки пустые. Если такой период уже есть, он просто станет активным.</div>
     ${preview||'<div class="muted">Нет активных проектов</div>'}
     <button class="btn full" data-plans-new-all style="margin-top:8px">Создать и включить</button></div>`;
@@ -3486,12 +3526,27 @@ function bind(){
     const t=!a?'⚠️ нет ответа от сервера':a.ok?`✅ AI работает — модель ${a.model}`:`❌ AI не работает${a.model?' (модель '+a.model+')':''}\n\n${a.error}`;
     const o2=document.getElementById('aiOut'); if(o2) o2.textContent=t;
   });
+  document.querySelectorAll('[data-rsrun],[data-rsads]').forEach(b=>b.onclick=async()=>{
+    const pid=+(b.dataset.rsrun||b.dataset.rsads), kind=b.dataset.rsrun?'run':'ads';
+    RS_BUSY[pid]=kind; render();
+    let r=null; try{ r=await api('POST',{type:kind==='run'?'research_run':'research_ads',id:pid}); }catch(e){}
+    RS_BUSY[pid]=null;
+    if(!r||r.error){ tg.showAlert&&tg.showAlert((r&&r.error)||'нет ответа от сервера'); }
+    else { RS[pid]={...(RS[pid]||{}),...r.researchData}; RS_STATUS=null; }
+    render();
+  });
+  { const b=document.querySelector('[data-rskey]'); if(b) b.onclick=()=>busyClick(b, async()=>{
+    const key=(document.getElementById('rsKey')||{}).value||'';
+    const r=await api('POST',{type:'research_set_key',key});
+    if(r&&r.error){ tg.showAlert&&tg.showAlert(r.error); return; }
+    RS_STATUS=(r&&r.research)||null; RS={}; tg.showAlert&&tg.showAlert('Ключ подключён ✅'+(r.research&&r.research.credits!=null?' Кредитов: '+r.research.credits:'')); render();
+  }); }
   document.querySelectorAll('[data-briefopen]').forEach(b=>b.onclick=()=>{const id=+b.dataset.briefopen;PROJ_BRIEF_OPEN=(PROJ_BRIEF_OPEN===id?null:id);render();});
   document.querySelectorAll('[data-briefsave]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
     const brief={}; document.querySelectorAll('[data-brief]').forEach(i=>brief[i.dataset.brief]=i.value);
     const r=await api('POST',{type:'project_set_brief',id:+b.dataset.briefsave,brief});
     if(r&&r.error){tg.showAlert&&tg.showAlert(r.error);return;}
-    if(r&&r.projects){DATA=r;} tg.showAlert&&tg.showAlert('Бриф сохранён'); render();
+    if(r&&r.projects){DATA=r;} delete RS[+b.dataset.briefsave]; tg.showAlert&&tg.showAlert('Бриф сохранён'); render();
   }));
   document.querySelectorAll('[data-ideaspreview]').forEach(b=>b.onclick=()=>busyClick(b, async()=>{
     const id=+b.dataset.ideaspreview;
