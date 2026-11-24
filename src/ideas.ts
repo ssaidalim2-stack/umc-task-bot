@@ -11,6 +11,7 @@ import { InlineKeyboard } from "grammy";
 import * as db from "./db";
 import * as d2 from "./db2";
 import { aiConfigured, generate, Source } from "./ai";
+import { researchForPrompt } from "./research";
 
 const TZ = 5 * 3600 * 1000;
 const HIST_MAX = 40;
@@ -22,6 +23,8 @@ export const BRIEF_FIELDS: [string, string][] = [
   ["lang", "Язык контента"],
   ["tone", "Тон бренда"],
   ["avoid", "Чего не предлагать"],
+  ["competitors", "Конкуренты (Instagram/TikTok)"],
+  ["keywords", "Ключевые слова для трендов"],
 ];
 
 export type IdeaKind = "news" | "trend" | "video" | "hook" | "story" | "graphic";
@@ -54,14 +57,18 @@ function briefText(p: { name: string; description?: string; brief?: Record<strin
   return lines.join("\n");
 }
 
-function buildPrompt(p: { name: string; description?: string; brief?: Record<string, string> }, day: string, planThemes: string[], history: string[]): string {
+function buildPrompt(p: { name: string; description?: string; brief?: Record<string, string> }, day: string, planThemes: string[], history: string[], research = ""): string {
   const kinds = kindsFor(day);
   const contentLang = (p.brief?.lang || "").trim() || "русский";
   return `Ты — креативный стратег маркетингового агентства в Узбекистане. Сегодня ${day.split("-").reverse().join(".")}.
 Подготовь для менеджера проекта ровно 4 идеи — конкретные, применимые сегодня, а не общие советы.
 
 ${briefText(p)}
+${research ? `
+${research}
 
+Опирайся на эти реальные примеры: хотя бы одна идея (trend или video) должна разбирать конкретный залетевший пост из списка — что в нём сработало и как сделать своё для проекта; его URL — в source.
+` : ""}
 Типы идей строго в таком порядке:
 ${kinds.map((k, i) => `${i + 1}. ${k} — ${KIND_LABEL[k]}`).join("\n")}
 
@@ -113,7 +120,9 @@ export async function generateForProject(projectId: number, day = localDay(), st
   if (!p) throw new Error("проект не найден");
   let history: string[] = [];
   try { history = JSON.parse((await d2.getSetting(`ideas_hist:${projectId}`)) || "[]"); } catch {}
-  const prompt = buildPrompt(p, day, await planThemes(projectId), history);
+  let research = "";
+  try { research = await researchForPrompt(projectId); } catch {}
+  const prompt = buildPrompt(p, day, await planThemes(projectId), history, research);
   const body = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9 } };
   let res;
   try { res = await generate({ ...body, tools: [{ google_search: {} }] }, timeoutMs); }
